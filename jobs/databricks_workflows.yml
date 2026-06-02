@@ -1,0 +1,160 @@
+resources:
+  jobs:
+    telegram_descriptive_pipeline:
+      name: telegram_descriptive_pipeline
+      tasks:
+        - task_key: "00_data_inventory_and_contracts"
+          notebook_task:
+            notebook_path: "../notebooks/00_data_inventory_and_contracts.py"
+            base_parameters:
+              source_catalog: "${var.source_catalog}"
+              too_schema: "${var.too_schema}"
+              random_walk_schema: "${var.random_walk_schema}"
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "01_crawl_qa_and_walk_diagnostics"
+          depends_on:
+            - task_key: "00_data_inventory_and_contracts"
+          notebook_task:
+            notebook_path: "../notebooks/01_crawl_qa_and_walk_diagnostics.py"
+            base_parameters:
+              source_catalog: "${var.source_catalog}"
+              random_walk_schema: "${var.random_walk_schema}"
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "02_discovery_population_estimation"
+          depends_on:
+            - task_key: "01_crawl_qa_and_walk_diagnostics"
+          notebook_task:
+            notebook_path: "../notebooks/02_discovery_population_estimation.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "03_rank_tail_denominators"
+          depends_on:
+            - task_key: "02_discovery_population_estimation"
+          notebook_task:
+            notebook_path: "../notebooks/03_rank_tail_denominators.py"
+            base_parameters:
+              source_catalog: "${var.source_catalog}"
+              too_schema: "${var.too_schema}"
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "04_too_sample_construction"
+          depends_on:
+            - task_key: "03_rank_tail_denominators"
+          notebook_task:
+            notebook_path: "../notebooks/04_too_sample_construction.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "05_post_ingestion_audit"
+          depends_on:
+            - task_key: "04_too_sample_construction"
+          notebook_task:
+            notebook_path: "../notebooks/05_post_ingestion_audit.py"
+            base_parameters:
+              source_catalog: "${var.source_catalog}"
+              too_schema: "${var.too_schema}"
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "06_language_detection"
+          depends_on:
+            - task_key: "05_post_ingestion_audit"
+          notebook_task:
+            notebook_path: "../notebooks/06_language_detection.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "06b_language_validation_and_adjudication"
+          depends_on:
+            - task_key: "06_language_detection"
+          notebook_task:
+            notebook_path: "../notebooks/06b_language_validation_and_adjudication.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "07_topic_taxonomy_and_classification"
+          depends_on:
+            - task_key: "06_language_detection"
+          notebook_task:
+            notebook_path: "../notebooks/07_topic_taxonomy_and_classification.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "08_channel_message_analysis_frame"
+          depends_on:
+            - task_key: "06b_language_validation_and_adjudication"
+            - task_key: "07_topic_taxonomy_and_classification"
+          notebook_task:
+            notebook_path: "../notebooks/08_channel_message_analysis_frame.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "09_audience_concentration_and_proxy_failure"
+          depends_on:
+            - task_key: "08_channel_message_analysis_frame"
+          notebook_task:
+            notebook_path: "../notebooks/09_audience_concentration_and_proxy_failure.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "10_content_posting_and_engagement"
+          depends_on:
+            - task_key: "08_channel_message_analysis_frame"
+          notebook_task:
+            notebook_path: "../notebooks/10_content_posting_and_engagement.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "11_link_forwarding_networks"
+          depends_on:
+            - task_key: "08_channel_message_analysis_frame"
+          notebook_task:
+            notebook_path: "../notebooks/11_link_forwarding_networks.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "12_missed_audience_sensitivity"
+          depends_on:
+            - task_key: "11_link_forwarding_networks"
+          notebook_task:
+            notebook_path: "../notebooks/12_missed_audience_sensitivity.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "13_robustness_and_sensitivity"
+          depends_on:
+            - task_key: "12_missed_audience_sensitivity"
+            - task_key: "09_audience_concentration_and_proxy_failure"
+            - task_key: "10_content_posting_and_engagement"
+          notebook_task:
+            notebook_path: "../notebooks/13_robustness_and_sensitivity.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+        - task_key: "14_reporting_exports"
+          depends_on:
+            - task_key: "13_robustness_and_sensitivity"
+          notebook_task:
+            notebook_path: "../notebooks/14_reporting_exports.py"
+            base_parameters:
+              output_catalog: "${var.output_catalog}"
+              output_schema: "${var.output_schema}"
+              execution_mode: "manifest_only"
+

@@ -1,0 +1,38 @@
+[project]
+name = "telegram_descriptive"
+version = "0.1.0"
+description = "Descriptive analysis scaffolding and reusable methods for high-reach public Telegram channels."
+authors = [{ name = "researchaccelerator" }]
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "numpy>=1.23",
+    "pandas>=1.5",
+    "matplotlib>=3.7",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7",
+    "ruff>=0.4",
+    "ipykernel",
+]
+
+[project.scripts]
+telegram-descriptive = "telegram_descriptive.config:print_default_config"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/telegram_descriptive"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+

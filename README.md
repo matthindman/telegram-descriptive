@@ -42,15 +42,40 @@ docs/        project plan, data-resource context, analysis inventories, data con
 src/         reusable data contracts, estimators, plots, exports (package modules)
 scripts/     metadata/probe utilities (e.g. telegram_databricks_resource_probe.py)
 notebooks/   orchestration + inspection only; heavy logic lives in src/
+jobs/        Databricks workflow bundle resources
+tests/       local tests for contracts, estimators, aggregation, and helpers
 ```
 
 Design rule: notebooks orchestrate and inspect; shared code in `src/` implements
 reusable data contracts, estimators, plots, and exports. Avoid one large
 do-everything notebook.
 
+## Current implementation status
+
+This repository currently contains the analysis scaffold, table contracts,
+Spark-agnostic method library, Databricks source-notebook entry points, and local
+tests. The notebooks default to `execution_mode=manifest_only`; they do not yet
+read production tables, write Delta outputs, or constitute a completed
+Databricks analysis run.
+
 ## Start here
 
 - `docs/telegram_descriptive_analysis_plan.md` — full sequenced plan and milestones.
+- `docs/data_contracts.md` — planned silver/gold table contracts.
+- `docs/methods_tail_estimator.md` — rank-tail denominator implementation notes.
+- `docs/methods_random_walk_crawl.md` — crawl lineage requirements and current gap.
+- `docs/methods_language_detection.md` — Telegram LID segmentation and aggregation plan.
+- `docs/methods_topic_classification.md` — Telegram-native topic taxonomy.
 - `docs/README_telegram_data_resources.md` — schema/table/variable orientation map.
 - `docs/AGENT_TELEGRAM_DATA_CONTEXT.md` — context for coding agents.
 - `docs/databricks_telegram_resources.agent.json` — machine-readable schema manifest.
+
+## Local verification
+
+```bash
+python -m pytest
+```
+
+The tests run without Databricks access. Databricks notebooks default to
+`execution_mode=manifest_only` and should only perform table scans when run with
+explicit smoke/core/full parameters.

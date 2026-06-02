@@ -1,0 +1,43 @@
+# Databricks asset bundle definition for telegram_descriptive.
+bundle:
+  name: telegram_descriptive
+
+include:
+  - jobs/*.yml
+
+variables:
+  source_catalog:
+    description: Source catalog containing Telegram production tables.
+    default: prod_tads
+  telegram_schema:
+    description: General Telegram schema.
+    default: telegram
+  random_walk_schema:
+    description: Telegram random-walk schema.
+    default: telegram_random_walk
+  too_schema:
+    description: Telegram Top-of-the-Ocean schema.
+    default: telegram_too
+  output_catalog:
+    description: Catalog for derived silver/gold outputs.
+    default: dev_sean
+  output_schema:
+    description: Schema for derived silver/gold outputs.
+    default: matt
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adb-7405612174002821.1.azuredatabricks.net
+    variables:
+      source_catalog: prod_tads
+      telegram_schema: telegram
+      random_walk_schema: telegram_random_walk
+      too_schema: telegram_too
+      output_catalog: dev_sean
+      output_schema: matt
+    presets:
+      artifacts_dynamic_version: true
+
