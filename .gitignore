@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+
+# Databricks
+.databricks/
+
+# Environments / secrets
+.env
+*.local
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Data artifacts (keep the repo code-only; large data stays in Databricks)
+*.parquet
+*.csv.gz
+data/
+figs/
