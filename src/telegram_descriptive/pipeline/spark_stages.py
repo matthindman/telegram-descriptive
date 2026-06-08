@@ -89,7 +89,7 @@ class PipelineContext:
             return target
         self.ensure_schema()
         writer = df.write.format("delta").mode("overwrite")
-        if replace_where:
+        if replace_where and self.source_exists(target):
             writer = writer.option("replaceWhere", replace_where)
         writer.saveAsTable(target)
         return target
@@ -163,6 +163,15 @@ def _empty_string_array() -> Any:
 def _string_array(*exprs: Any) -> Any:
     _require_spark()
     return F.array(*[expr.cast("string") for expr in exprs])
+
+
+def _compact_string_array(*exprs: Any) -> Any:
+    _require_spark()
+    array_expr = _string_array(*exprs)
+    return F.filter(
+        array_expr,
+        lambda value: value.isNotNull() & (F.length(F.trim(value)) > 0),
+    )
 
 
 def _now_lit() -> Any:
@@ -374,12 +383,10 @@ def _build_silver_messages(ctx: PipelineContext) -> DataFrame:
         (_col(base, "replied_id").isNotNull() | _col(base, "is_reply").cast("boolean")).alias("is_reply"),
         _array_col(base, "hashtags").alias("hashtags"),
         F.array_distinct(
-            F.array_compact(
-                _string_array(
-                    _col(base, "url", cast="string"),
-                    _col(base, "post_link", cast="string"),
-                    _col(base, "media_url", cast="string"),
-                )
+            _compact_string_array(
+                _col(base, "url", cast="string"),
+                _col(base, "post_link", cast="string"),
+                _col(base, "media_url", cast="string"),
             )
         ).alias("urls"),
         _col(base, "repost_channel_data", cast="string").alias("repost_channel_data"),
@@ -969,6 +976,32 @@ def stage_08(ctx: PipelineContext) -> dict[str, Any]:
         ctx.write("gold_channel_analysis_frame", empty_contract_df(ctx, "gold_channel_analysis_frame"))
         ctx.write("gold_message_analysis_frame", empty_contract_df(ctx, "gold_message_analysis_frame"))
         return {"stage": "08", "status": "missing_channels"}
+    channel_metrics_ch = (
+        channel_metrics.select(
+            "canonical_channel_id",
+            F.col("follower_count").cast("double").alias("follower_count"),
+            F.col("views_count").cast("double").alias("views_count"),
+            F.col("post_count").cast("double").alias("post_count"),
+        )
+        if channel_metrics is not None
+        else ctx.spark.createDataFrame(
+            [],
+            "canonical_channel_id string, follower_count double, views_count double, post_count double",
+        )
+    )
+    sample_ch = (
+        sample.select("canonical_channel_id", F.col("sample_version").alias("sample_version"))
+        if sample is not None
+        else ctx.spark.createDataFrame([], "canonical_channel_id string, sample_version string")
+    )
+    audit_ch = (
+        audit.select(
+            "canonical_channel_id",
+            F.col("observed_message_count").cast("double").alias("observed_message_count"),
+        )
+        if audit is not None
+        else ctx.spark.createDataFrame([], "canonical_channel_id string, observed_message_count double")
+    )
     lang_ch = (
         language.where(F.col("entity_type") == "channel").select(F.col("entity_id").alias("canonical_channel_id"), "language_label", "language_confidence")
         if language is not None
@@ -989,10 +1022,9 @@ def stage_08(ctx: PipelineContext) -> dict[str, Any]:
         if edges is not None
         else ctx.spark.createDataFrame([], "canonical_channel_id string, link_outdegree double, forward_outdegree double")
     )
-    frame = channels.join(channel_metrics, "canonical_channel_id", "left")
-    for optional in (sample, audit, lang_ch, topic_ch, degrees):
-        if optional is not None:
-            frame = frame.join(optional, "canonical_channel_id", "left")
+    frame = channels.join(channel_metrics_ch, "canonical_channel_id", "left")
+    for optional in (sample_ch, audit_ch, lang_ch, topic_ch, degrees):
+        frame = frame.join(optional, "canonical_channel_id", "left")
     channel_out = frame.select(
         F.col("canonical_channel_id"),
         F.coalesce(F.col("sample_version"), F.lit(ctx.config.analysis.sample_version)).alias("too_sample_version"),
@@ -1109,7 +1141,14 @@ def stage_10(ctx: PipelineContext) -> dict[str, Any]:
 
 
 def _domain_expr(normalized_url_col: str) -> Any:
-    return F.expr(f"regexp_replace(lower(parse_url({normalized_url_col}, 'HOST')), '^www\\\\.', '')")
+    host = F.lower(
+        F.regexp_extract(
+            F.col(normalized_url_col),
+            r"^[A-Za-z][A-Za-z0-9+.-]*://(?:[^/@?#]+@)?([^/:?#]+)",
+            1,
+        )
+    )
+    return F.regexp_replace(host, r"^www\.", "")
 
 
 def stage_11(ctx: PipelineContext) -> dict[str, Any]:
