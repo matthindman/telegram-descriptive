@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 
@@ -23,8 +24,9 @@ def suppress_small_counts(rows: Iterable[Mapping[str, Any]], min_cell_count: int
 def write_csv(rows: Iterable[Mapping[str, Any]], path: str) -> None:
     data = list(rows)
     fieldnames = sorted({key for row in data for key in row})
-    with open(path, "w", encoding="utf-8", newline="") as handle:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(data)
-

@@ -10,6 +10,8 @@ def dark_audience_bound(observed_cluster_mass: float, entry_intensity: float, ka
     is represented by ``float("inf")``.
     """
 
+    if observed_cluster_mass < 0:
+        raise ValueError("observed_cluster_mass must be nonnegative")
     if entry_intensity < 0:
         raise ValueError("entry_intensity must be nonnegative")
     if kappa == float("inf"):
@@ -17,4 +19,3 @@ def dark_audience_bound(observed_cluster_mass: float, entry_intensity: float, ka
     if kappa < 0:
         raise ValueError("kappa must be nonnegative")
     return float(observed_cluster_mass) * float(entry_intensity) * float(kappa)
-

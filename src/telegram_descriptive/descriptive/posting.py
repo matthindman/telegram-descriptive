@@ -12,12 +12,16 @@ def parse_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
-    text = str(value).strip().replace("Z", "+00:00")
-    try:
-        return datetime.fromisoformat(text)
-    except ValueError:
-        return None
+        parsed = value
+    else:
+        text = str(value).strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def channel_posting_summary(rows: Iterable[Mapping[str, Any]], now: datetime | None = None) -> list[dict[str, Any]]:
@@ -44,4 +48,3 @@ def channel_posting_summary(rows: Iterable[Mapping[str, Any]], now: datetime | N
             }
         )
     return output
-

@@ -29,6 +29,8 @@ def bootstrap_interval(
     seed: int = 0,
     alpha: float = 0.05,
 ) -> tuple[float, float, float]:
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be between 0 and 1")
     draws = [statistic(sample) for sample in bootstrap_samples(items, replicates, seed)]
     if not draws:
         point = statistic(items)
@@ -37,4 +39,3 @@ def bootstrap_interval(
     lower = float(np.quantile(draws, alpha / 2))
     upper = float(np.quantile(draws, 1 - alpha / 2))
     return float(point), lower, upper
-

@@ -11,7 +11,10 @@ from telegram_descriptive.tables import stable_edge_id
 
 def domain_from_url(url: str) -> str:
     parsed = urlparse(url if "://" in url else f"https://{url}")
-    return parsed.netloc.lower().removeprefix("www.")
+    host = (parsed.hostname or "").lower().removeprefix("www.").rstrip(".")
+    if not host or any(char.isspace() for char in host):
+        return ""
+    return host
 
 
 def url_edges(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -37,4 +40,3 @@ def url_edges(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 }
             )
     return edges
-

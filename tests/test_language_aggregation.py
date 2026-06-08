@@ -1,3 +1,5 @@
+import pytest
+
 from telegram_descriptive.language.aggregation import aggregate_language_predictions
 from telegram_descriptive.language.segmentation import best_text_for_message, segment_record
 
@@ -36,3 +38,16 @@ def test_aggregate_language_predictions_marks_mixed_when_margin_small():
     assert labels[0]["language_label"] == "MIXED"
     assert labels[0]["language_segment_count"] == 2
 
+
+def test_language_helpers_reject_missing_entity_ids():
+    labels = aggregate_language_predictions(
+        [
+            {"entity_id": None, "language": "en", "confidence": 1.0, "weight": 1.0},
+            {"entity_id": " null ", "language": "es", "confidence": 1.0, "weight": 1.0},
+            {"entity_id": "c1", "language": "en", "confidence": 1.0, "weight": 1.0},
+        ]
+    )
+
+    assert [row["entity_id"] for row in labels] == ["c1"]
+    with pytest.raises(ValueError, match="missing entity id"):
+        segment_record({"canonical_channel_id": None, "channel_name": "Noticias"}, "canonical_channel_id")

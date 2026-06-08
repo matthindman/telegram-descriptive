@@ -28,8 +28,14 @@ def fit_simple_saturation(exposures: Sequence[float], discoveries: Sequence[floa
     y = np.asarray(discoveries, dtype=float)
     if len(x) != len(y):
         raise ValueError("exposures and discoveries must have the same length")
+    finite_mask = np.isfinite(x) & np.isfinite(y)
+    dropped_nonfinite = int(len(x) - finite_mask.sum())
+    x = x[finite_mask]
+    y = y[finite_mask]
     if len(x) == 0:
-        return SaturationFit("simple_exponential", 0.0, 0.0, 0.0, 0.0)
+        return SaturationFit("simple_exponential", 0.0, 0.0, 0.0, 0.0, ("no_finite_points",))
+    if np.any(x < 0) or np.any(y < 0):
+        raise ValueError("exposures and discoveries must be nonnegative")
     observed_final = float(np.nanmax(y))
     max_x = float(np.nanmax(x)) if np.nanmax(x) > 0 else 1.0
     best: SaturationFit | None = None
@@ -46,6 +52,8 @@ def fit_simple_saturation(exposures: Sequence[float], discoveries: Sequence[floa
                 best = candidate
     assert best is not None
     flags: list[str] = []
+    if dropped_nonfinite:
+        flags.append("dropped_nonfinite_points")
     if np.isclose(best.asymptote, asymptote_max):
         flags.append("asymptote_grid_boundary")
     if np.isclose(best.rate, rates[0]) or np.isclose(best.rate, rates[-1]):

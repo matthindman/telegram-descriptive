@@ -303,7 +303,12 @@ def _build_silver_channels(ctx: PipelineContext, metric_snapshots: DataFrame) ->
         ["canonical_channel_id"],
         ["scrape_timestamp", "last_ingestion_timestamp", "first_ingestion_timestamp"],
     )
-    joined = latest_channels.join(metric_snapshots, "canonical_channel_id", "left")
+    channel_metrics = metric_snapshots.select(
+        "canonical_channel_id",
+        F.col("follower_count").alias("_metric_follower_count"),
+        F.col("snapshot_timestamp").alias("_metric_snapshot_timestamp"),
+    )
+    joined = latest_channels.join(channel_metrics, "canonical_channel_id", "left")
     first_observed = F.least(
         _col(joined, "first_ingestion_timestamp", cast="timestamp"),
         _col(joined, "first_scrape_timestamp", cast="timestamp"),
@@ -311,7 +316,11 @@ def _build_silver_channels(ctx: PipelineContext, metric_snapshots: DataFrame) ->
     last_observed = F.greatest(
         _col(joined, "last_ingestion_timestamp", cast="timestamp"),
         _col(joined, "scrape_timestamp", cast="timestamp"),
-        _col(joined, "snapshot_timestamp", cast="timestamp"),
+        _col(joined, "_metric_snapshot_timestamp", cast="timestamp"),
+    )
+    follower_count = F.coalesce(
+        _col(joined, "_metric_follower_count", cast="double"),
+        _col(joined, "follower_count", cast="double"),
     )
     out = joined.select(
         F.col("canonical_channel_id"),
@@ -321,7 +330,7 @@ def _build_silver_channels(ctx: PipelineContext, metric_snapshots: DataFrame) ->
         F.when(F.col("canonical_channel_id").isNull(), F.lit("unknown_missing_id"))
         .otherwise(F.lit("eligible_unconfirmed_public_status"))
         .alias("eligibility_status"),
-        _col(joined, "follower_count", cast="double").alias("latest_follower_count"),
+        follower_count.alias("latest_follower_count"),
         first_observed.alias("first_observed_at"),
         last_observed.alias("last_observed_at"),
         F.lit(None).cast("string").alias("channel_type"),
@@ -329,7 +338,7 @@ def _build_silver_channels(ctx: PipelineContext, metric_snapshots: DataFrame) ->
         F.lit(ctx.config.sources.too_channels).alias("source_provenance"),
         _quality_flags(
             (F.col("canonical_channel_id").isNull(), "missing_channel_id"),
-            (_col(joined, "follower_count").isNull(), "missing_follower_count"),
+            (follower_count.isNull(), "missing_follower_count"),
         ).alias("quality_flags"),
     )
     return _contract_select(out, "silver_channels")
@@ -636,7 +645,7 @@ def stage_03(ctx: PipelineContext) -> dict[str, Any]:
         metric_values = [
             float(row["metric_value"])
             for row in ranked.where(F.col("metric_name") == metric_name).orderBy("rank").select("metric_value").collect()
-            if row["metric_value"] is not None
+            if row["metric_value"] is not None and float(row["metric_value"]) > 0
         ]
         for boundary in ctx.config.analysis.rank_boundaries:
             if len(metric_values) < max(boundary, 20):
@@ -675,12 +684,26 @@ def stage_03(ctx: PipelineContext) -> dict[str, Any]:
                         "diagnostic_flags": list(estimate.flags),
                     }
                 )
-    if rows:
-        df = ctx.spark.createDataFrame(rows, _schema_for_contract(get_contract("gold_population_estimates")))
-        ctx.write("gold_population_estimates", df, replace_where=f"estimate_version = {_sql_literal(ctx.config.analysis.estimate_version)} AND estimand = 'audience_mass_denominator'")
-    if parameter_rows:
-        params_df = ctx.spark.createDataFrame(parameter_rows, _schema_for_contract(get_contract("gold_tail_parameters")))
-        ctx.write("gold_tail_parameters", params_df, replace_where=f"estimate_version = {_sql_literal(ctx.config.analysis.estimate_version)}")
+    df = (
+        ctx.spark.createDataFrame(rows, _schema_for_contract(get_contract("gold_population_estimates")))
+        if rows
+        else empty_contract_df(ctx, "gold_population_estimates")
+    )
+    ctx.write(
+        "gold_population_estimates",
+        df,
+        replace_where=f"estimate_version = {_sql_literal(ctx.config.analysis.estimate_version)} AND estimand = 'audience_mass_denominator'",
+    )
+    params_df = (
+        ctx.spark.createDataFrame(parameter_rows, _schema_for_contract(get_contract("gold_tail_parameters")))
+        if parameter_rows
+        else empty_contract_df(ctx, "gold_tail_parameters")
+    )
+    ctx.write(
+        "gold_tail_parameters",
+        params_df,
+        replace_where=f"estimate_version = {_sql_literal(ctx.config.analysis.estimate_version)}",
+    )
     return {"stage": "03", "ranked_metrics": ranked.count() if ctx.config.analysis.should_scan else None, "tail_rows": len(rows)}
 
 
@@ -710,7 +733,12 @@ def stage_04(ctx: PipelineContext) -> dict[str, Any]:
             .first()
         )
         denominator = row["estimate"] if row else None
-    coverage_expr = F.lit(float(numerator) / float(denominator)).cast("double") if numerator and denominator else F.lit(None).cast("double")
+    coverage_value = (
+        float(numerator) / float(denominator)
+        if numerator is not None and denominator is not None and float(denominator) > 0
+        else None
+    )
+    coverage_expr = F.lit(coverage_value).cast("double")
     out = selected.select(
         F.lit(ctx.config.analysis.sample_version).alias("sample_version"),
         F.col("canonical_channel_id"),
@@ -1094,12 +1122,267 @@ def _metric_summary_rows(df: DataFrame, section: str, metrics: list[str], run_id
     return df.sparkSession.createDataFrame(rows, _schema_for_contract(get_contract("gold_descriptive_summaries")))
 
 
+def _concentration_summary_rows(
+    df: DataFrame,
+    section: str,
+    metrics: list[str],
+    run_id: str,
+    top_ks: tuple[int, ...] = (10, 100),
+) -> DataFrame:
+    """Spark-native Gini, HHI, and top-k concentration ratios for nonnegative metrics."""
+
+    rows = []
+    schema = _schema_for_contract(get_contract("gold_descriptive_summaries"))
+    for metric in metrics:
+        if metric not in df.columns:
+            continue
+        values = (
+            df.select(F.col(metric).cast("double").alias("value"))
+            .where(F.col("value").isNotNull() & (F.col("value") >= 0))
+            .cache()
+        )
+        try:
+            summary = values.agg(F.count("value").alias("n"), F.sum("value").alias("total")).first()
+            n = int(summary["n"] or 0)
+            total = float(summary["total"] or 0.0)
+            if n == 0:
+                continue
+            if total <= 0:
+                rows.extend(
+                    {
+                        "run_id": run_id,
+                        "section": section,
+                        "cohort": "all",
+                        "metric": metric,
+                        "statistic": statistic,
+                        "value": 0.0,
+                        "n": n,
+                        "notes": "all observed values are zero",
+                    }
+                    for statistic in ("gini", "hhi", *(f"top_{k}_share" for k in top_ks))
+                )
+                continue
+
+            ranked = values.withColumn("_rank_asc", F.row_number().over(Window.orderBy(F.col("value").asc())))
+            weighted_sum = float(
+                ranked.agg(F.sum(F.col("_rank_asc") * F.col("value")).alias("weighted_sum")).first()[
+                    "weighted_sum"
+                ]
+                or 0.0
+            )
+            share = F.col("value") / F.lit(total)
+            hhi_value = float(values.agg(F.sum(share * share).alias("hhi")).first()["hhi"] or 0.0)
+            gini_value = (2.0 * weighted_sum) / (n * total) - (n + 1.0) / n
+            rows.extend(
+                [
+                    {
+                        "run_id": run_id,
+                        "section": section,
+                        "cohort": "all",
+                        "metric": metric,
+                        "statistic": "gini",
+                        "value": float(max(0.0, min(1.0, gini_value))),
+                        "n": n,
+                        "notes": "computed over nonnegative non-null values",
+                    },
+                    {
+                        "run_id": run_id,
+                        "section": section,
+                        "cohort": "all",
+                        "metric": metric,
+                        "statistic": "hhi",
+                        "value": hhi_value,
+                        "n": n,
+                        "notes": "sum of squared shares",
+                    },
+                ]
+            )
+            for k in top_ks:
+                top_sum = float(
+                    values.orderBy(F.col("value").desc()).limit(k).agg(F.sum("value").alias("top_sum")).first()[
+                        "top_sum"
+                    ]
+                    or 0.0
+                )
+                rows.append(
+                    {
+                        "run_id": run_id,
+                        "section": section,
+                        "cohort": "all",
+                        "metric": metric,
+                        "statistic": f"top_{k}_share",
+                        "value": top_sum / total,
+                        "n": n,
+                        "notes": "top-k share of observed nonnegative mass",
+                    }
+                )
+        finally:
+            values.unpersist()
+    return df.sparkSession.createDataFrame(rows, schema)
+
+
+def _market_share_summary_rows(
+    df: DataFrame,
+    section: str,
+    group_cols: list[str],
+    metrics: list[str],
+    run_id: str,
+) -> DataFrame:
+    """Audience-mass shares by language/topic labels after Spark aggregation."""
+
+    rows = []
+    schema = _schema_for_contract(get_contract("gold_descriptive_summaries"))
+    for group_col in group_cols:
+        if group_col not in df.columns:
+            continue
+        for metric in metrics:
+            if metric not in df.columns:
+                continue
+            base = df.select(
+                F.coalesce(F.col(group_col).cast("string"), F.lit("unknown")).alias("group_value"),
+                F.col(metric).cast("double").alias("value"),
+            ).where(F.col("value").isNotNull() & (F.col("value") >= 0))
+            total = base.agg(F.sum("value").alias("total")).first()["total"]
+            if not total or float(total) <= 0:
+                continue
+            grouped = base.groupBy("group_value").agg(F.count("*").alias("n"), F.sum("value").alias("mass"))
+            for row in grouped.collect():
+                label = row["group_value"] or "unknown"
+                rows.append(
+                    {
+                        "run_id": run_id,
+                        "section": section,
+                        "cohort": f"{group_col}:{label}",
+                        "metric": metric,
+                        "statistic": "market_share",
+                        "value": float(row["mass"] or 0.0) / float(total),
+                        "n": int(row["n"] or 0),
+                        "notes": "share of observed nonnegative channel mass",
+                    }
+                )
+    return df.sparkSession.createDataFrame(rows, schema)
+
+
+def _proxy_failure_summary_rows(ctx: PipelineContext, df: DataFrame) -> DataFrame:
+    """Summarize how well member counts proxy for observed view counts."""
+
+    schema = _schema_for_contract(get_contract("gold_descriptive_summaries"))
+    required = {"follower_count", "views_count"}
+    if not required <= set(df.columns):
+        return ctx.spark.createDataFrame([], schema)
+
+    base = df.select(
+        F.col("follower_count").cast("double").alias("follower_count"),
+        F.col("views_count").cast("double").alias("views_count"),
+    ).where(
+        F.col("follower_count").isNotNull()
+        & F.col("views_count").isNotNull()
+        & (F.col("follower_count") >= 0)
+        & (F.col("views_count") >= 0)
+    ).cache()
+    try:
+        n = int(base.count())
+        rows: list[dict[str, Any]] = []
+        if n == 0:
+            return ctx.spark.createDataFrame([], schema)
+
+        pearson = base.agg(F.corr("follower_count", "views_count").alias("corr")).first()["corr"]
+        rows.append(
+            {
+                "run_id": ctx.config.analysis.run_id,
+                "section": "audience",
+                "cohort": "all",
+                "metric": "follower_count_vs_views_count",
+                "statistic": "pearson_correlation",
+                "value": float(pearson) if pearson is not None else None,
+                "n": n,
+                "notes": "raw-scale correlation; null when either metric has zero variance",
+            }
+        )
+        if n < 2:
+            return ctx.spark.createDataFrame(rows, schema)
+
+        ranked = (
+            base.withColumn("_follower_rank", F.dense_rank().over(Window.orderBy(F.col("follower_count").desc())))
+            .withColumn("_views_rank", F.dense_rank().over(Window.orderBy(F.col("views_count").desc())))
+            .withColumn("_follower_pr", F.percent_rank().over(Window.orderBy(F.col("follower_count").desc())))
+            .withColumn("_views_pr", F.percent_rank().over(Window.orderBy(F.col("views_count").desc())))
+            .withColumn("_rank_gap", F.abs(F.col("_follower_pr") - F.col("_views_pr")))
+        )
+        rank_stats = ranked.agg(
+            F.corr("_follower_rank", "_views_rank").alias("spearman_dense_rank_corr"),
+            F.mean("_rank_gap").alias("mean_rank_percentile_gap"),
+            F.max("_rank_gap").alias("max_rank_percentile_gap"),
+            F.sum(F.when((F.col("_follower_pr") <= 0.10) & (F.col("_views_pr") >= 0.50), 1).otherwise(0)).alias(
+                "high_members_low_views"
+            ),
+            F.sum(F.when((F.col("_views_pr") <= 0.10) & (F.col("_follower_pr") >= 0.50), 1).otherwise(0)).alias(
+                "high_views_low_members"
+            ),
+        ).first()
+        for statistic in ("spearman_dense_rank_corr", "mean_rank_percentile_gap", "max_rank_percentile_gap"):
+            rows.append(
+                {
+                    "run_id": ctx.config.analysis.run_id,
+                    "section": "audience",
+                    "cohort": "all",
+                    "metric": "follower_count_vs_views_count",
+                    "statistic": statistic,
+                    "value": float(rank_stats[statistic]) if rank_stats[statistic] is not None else None,
+                    "n": n,
+                    "notes": "rank-based member/view proxy diagnostic",
+                }
+            )
+        for statistic in ("high_members_low_views", "high_views_low_members"):
+            count = int(rank_stats[statistic] or 0)
+            rows.append(
+                {
+                    "run_id": ctx.config.analysis.run_id,
+                    "section": "audience",
+                    "cohort": "all",
+                    "metric": "follower_count_vs_views_count",
+                    "statistic": statistic,
+                    "value": count / n,
+                    "n": n,
+                    "notes": "share using top-decile versus bottom-half rank rule",
+                }
+            )
+        return ctx.spark.createDataFrame(rows, schema)
+    finally:
+        base.unpersist()
+
+
 def stage_09(ctx: PipelineContext) -> dict[str, Any]:
     frame = ctx.target_df("gold_channel_analysis_frame")
     if frame is None:
-        out = _summary_rows(ctx, [{"section": "audience", "metric": "missing_input", "statistic": "status", "value": None, "notes": "gold_channel_analysis_frame missing"}])
+        out = _summary_rows(
+            ctx,
+            [
+                {
+                    "section": "audience",
+                    "metric": "missing_input",
+                    "statistic": "status",
+                    "value": None,
+                    "notes": "gold_channel_analysis_frame missing",
+                }
+            ],
+        )
     else:
-        out = _metric_summary_rows(frame, "audience", ["follower_count", "views_count", "post_count", "link_outdegree", "forward_outdegree"], ctx.config.analysis.run_id)
+        metrics = ["follower_count", "views_count", "post_count", "link_outdegree", "forward_outdegree"]
+        out = _metric_summary_rows(frame, "audience", metrics, ctx.config.analysis.run_id)
+        out = out.unionByName(
+            _concentration_summary_rows(frame, "audience", metrics, ctx.config.analysis.run_id)
+        )
+        out = out.unionByName(
+            _market_share_summary_rows(
+                frame,
+                "audience",
+                ["language_label", "topic_label"],
+                ["follower_count", "views_count"],
+                ctx.config.analysis.run_id,
+            )
+        )
+        out = out.unionByName(_proxy_failure_summary_rows(ctx, frame))
     ctx.write("gold_descriptive_summaries", out, replace_where=f"run_id = {_sql_literal(ctx.config.analysis.run_id)} AND section = 'audience'")
     return {"stage": "09", "status": "audience_summaries_written"}
 

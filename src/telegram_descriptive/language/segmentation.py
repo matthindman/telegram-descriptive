@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from telegram_descriptive.tables import canonical_channel_id
+
 
 TEXT_FIELD_WEIGHTS = {
     "channel_name": 0.8,
@@ -46,8 +48,8 @@ def segment_record(
 ) -> list[TextSegment]:
     """Create source-aware LID segments from a channel or message row."""
 
-    entity_id = str(row.get(entity_id_col, ""))
-    if not entity_id:
+    entity_id = canonical_channel_id(row.get(entity_id_col))
+    if entity_id is None:
         raise ValueError(f"missing entity id column {entity_id_col!r}")
     weights = fields or TEXT_FIELD_WEIGHTS
     segments: list[TextSegment] = []
@@ -81,4 +83,3 @@ def best_text_for_message(row: Mapping[str, Any]) -> str:
             deduped.append(piece)
             seen.add(piece)
     return "\n".join(deduped)
-

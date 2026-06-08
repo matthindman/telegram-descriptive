@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping
+import math
 from typing import Any
 
 
@@ -13,10 +14,11 @@ def share_by_category(rows: Iterable[Mapping[str, Any]], category_col: str, weig
     for row in rows:
         category = str(row.get(category_col) or "unknown")
         weight = float(row.get(weight_col) or 0.0) if weight_col else 1.0
+        if not math.isfinite(weight) or weight < 0:
+            continue
         totals[category] += weight
         total += weight
     return [
         {"category": category, "value": value, "share": value / total if total else 0.0}
         for category, value in sorted(totals.items())
     ]
-

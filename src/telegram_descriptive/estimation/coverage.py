@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 
-def coverage(numerator_mass: float, denominator_mass: float | None) -> float | None:
-    if denominator_mass is None or denominator_mass <= 0:
+def coverage(numerator_mass: float | None, denominator_mass: float | None) -> float | None:
+    if numerator_mass is None or denominator_mass is None or denominator_mass <= 0:
         return None
     return max(0.0, min(1.0, float(numerator_mass) / float(denominator_mass)))
 
@@ -21,4 +21,3 @@ def top_k_share(values: list[float], k: int) -> float:
     if total == 0:
         return 0.0
     return sum(clean[:k]) / total
-

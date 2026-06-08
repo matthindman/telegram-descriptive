@@ -6,6 +6,8 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from telegram_descriptive.tables import canonical_channel_id
+
 
 def aggregate_language_predictions(
     predictions: Iterable[Mapping[str, Any]],
@@ -22,7 +24,7 @@ def aggregate_language_predictions(
     scores: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     segment_counts: dict[str, int] = defaultdict(int)
     for row in predictions:
-        entity = str(row.get(entity_col, ""))
+        entity = canonical_channel_id(row.get(entity_col))
         label = row.get(label_col)
         if not entity or not label:
             continue
@@ -62,4 +64,3 @@ def aggregate_language_predictions(
             }
         )
     return output
-

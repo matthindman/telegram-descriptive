@@ -39,8 +39,10 @@ def chao2(samples: Iterable[Iterable[Hashable]]) -> Chao2Estimate:
 def chao2_from_counts(samples: int, observed_species: int, singletons: int, doubletons: int) -> float:
     """Bias-corrected Chao2 estimate from Spark-computed incidence counts."""
 
+    if min(samples, observed_species, singletons, doubletons) < 0:
+        raise ValueError("Chao2 counts must be nonnegative")
     if samples == 0:
-        return 0.0
+        return float(observed_species)
     if doubletons > 0:
         estimate = observed_species + ((samples - 1) / samples) * (singletons * singletons) / (2 * doubletons)
     else:

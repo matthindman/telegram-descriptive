@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -42,10 +43,11 @@ def validate_topic_key(result: Mapping[str, Any]) -> dict[str, Any]:
     if topic_key not in topics:
         topic_key = "mixed_unknown"
     confidence = float(result.get("confidence") or 0.0)
+    if not math.isfinite(confidence):
+        confidence = 0.0
     return {
         **dict(result),
         "topic_key": topic_key,
         "topic_label": topics[topic_key].label,
         "confidence": max(0.0, min(1.0, confidence)),
     }
-
