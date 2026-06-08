@@ -33,19 +33,33 @@ registry so tests and notebooks can validate against the same definitions.
   incomplete lineage.
 - `silver_ranked_metrics`: deduplicated channel rankings by metric and version.
 - `silver_lid_segments`: source-aware text segments and language predictions.
+- `silver_language_labels`: provisional channel/message language labels with
+  evidence weights and label source.
 - `silver_topic_inputs`: compact channel/message evidence bundles for topic
   classification.
+- `silver_topic_labels`: provisional topic labels, confidence, method, and
+  evidence IDs.
 
 ## Planned Gold Tables
 
 - `gold_too_sample_frame`: final and candidate TOO membership, selection rules,
   metric ranks, coverage estimates, and post-ingestion status.
+- `gold_post_ingestion_audit`: selected-channel message and metric availability
+  audit.
 - `gold_channel_analysis_frame`: channel-level descriptive frame with member/view
   metrics, labels, activity, content mix, network features, and provenance.
 - `gold_message_analysis_frame`: message-level descriptive frame with content,
   engagement, language/topic labels, and channel covariates.
 - `gold_population_estimates`: discovery, rank-tail, denominator, bootstrap,
   coverage, and diagnostic outputs by version.
+- `gold_tail_parameters`: fitted rank-tail parameters and diagnostics needed to
+  reproduce D0-D3 denominator estimates.
+- `gold_descriptive_summaries`: audience, content, posting, and engagement
+  aggregate statistics.
+- `gold_network_summaries`: edge-type/node network summary statistics.
+- `gold_robustness_summaries`: robustness, sensitivity, and missed-audience
+  scenario rows.
+- `gold_reporting_manifest`: final materialized-output inventory.
 - `gold_validation_summaries`: language, topic, eligibility, and table-quality
   validation summaries.
 
@@ -55,4 +69,3 @@ The 2026-06-01 Databricks probe did not find clean random-walk event, exposure,
 validation, chain, or seed tables. Notebooks 01 and 02 therefore default to a
 structured gap report. Population-count completeness estimates should only run
 after those inputs exist.
-

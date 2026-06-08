@@ -32,11 +32,17 @@ def chao2(samples: Iterable[Iterable[Hashable]]) -> Chao2Estimate:
     observed = len(incidence)
     q1 = sum(count == 1 for count in incidence.values())
     q2 = sum(count == 2 for count in incidence.values())
-    if m == 0:
-        return Chao2Estimate(0, 0, 0, 0, 0.0)
-    if q2 > 0:
-        estimate = observed + ((m - 1) / m) * (q1 * q1) / (2 * q2)
-    else:
-        estimate = observed + ((m - 1) / m) * (q1 * (q1 - 1)) / 2
-    return Chao2Estimate(m, observed, q1, q2, float(max(observed, estimate)))
+    estimate = chao2_from_counts(samples=m, observed_species=observed, singletons=q1, doubletons=q2)
+    return Chao2Estimate(m, observed, q1, q2, estimate)
 
+
+def chao2_from_counts(samples: int, observed_species: int, singletons: int, doubletons: int) -> float:
+    """Bias-corrected Chao2 estimate from Spark-computed incidence counts."""
+
+    if samples == 0:
+        return 0.0
+    if doubletons > 0:
+        estimate = observed_species + ((samples - 1) / samples) * (singletons * singletons) / (2 * doubletons)
+    else:
+        estimate = observed_species + ((samples - 1) / samples) * (singletons * (singletons - 1)) / 2
+    return float(max(observed_species, estimate))

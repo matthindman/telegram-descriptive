@@ -85,11 +85,19 @@ class OutputTables:
         "silver_random_walk_validations",
         "silver_ranked_metrics",
         "silver_lid_segments",
+        "silver_language_labels",
         "silver_topic_inputs",
+        "silver_topic_labels",
         "gold_too_sample_frame",
+        "gold_post_ingestion_audit",
         "gold_channel_analysis_frame",
         "gold_message_analysis_frame",
         "gold_population_estimates",
+        "gold_tail_parameters",
+        "gold_descriptive_summaries",
+        "gold_network_summaries",
+        "gold_robustness_summaries",
+        "gold_reporting_manifest",
         "gold_validation_summaries",
     )
 
@@ -114,16 +122,28 @@ class AnalysisConfig:
     """Configuration values that should not be magic constants in notebooks."""
 
     execution_mode: str = "manifest_only"
+    run_id: str = "manual"
+    sample_version: str = "telegram_too_v1"
+    ranking_version: str = "telegram_rank_v1"
+    estimate_version: str = "telegram_estimates_v1"
+    lid_run_id: str = "telegram_lid_v1"
+    topic_run_id: str = "telegram_topics_v1"
     random_seed: int = 20260602
+    smoke_limit: int = 50_000
+    write_outputs: bool = True
     metric_snapshot_policy: str = "latest"
     member_metric: str = "follower_count"
     channel_view_metric: str = "views_count"
     post_view_metric: str = "post_view_count"
+    too_member_threshold: int = 10_000
+    too_top_n: int = 1_662
     rank_boundaries: tuple[int, ...] = (50, 100, 200, 500, 1000)
     member_thresholds: tuple[int, ...] = (1_000, 10_000, 100_000, 1_000_000)
+    top_n_values: tuple[int, ...] = (100, 500, 1000, 1662)
     bootstrap_replicates: int = 1000
     language_no_text_label: str = "NO TEXT"
     topic_taxonomy_version: str = "telegram_topics_v1"
+    export_root: str = "/Volumes/dev_sean/matt/models/telegram_descriptive"
 
     @property
     def should_scan(self) -> bool:

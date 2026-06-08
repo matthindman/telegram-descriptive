@@ -317,7 +317,8 @@ def continuous_tail_mass(
     t = np.linspace(0.0, t_max, integration_steps)
     log_integrand = _tail_log_integrand(t, y0, rc, alpha, eta0, eta1, eta2)
     integrand = np.exp(np.clip(log_integrand, -745, 709))
-    tail = float(np.trapezoid(integrand, t))
+    trapezoid = getattr(np, "trapezoid", None) or getattr(np, "trapz")
+    tail = float(trapezoid(integrand, t))
     return tail, tuple(flags)
 
 

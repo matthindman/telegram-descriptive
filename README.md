@@ -52,11 +52,25 @@ do-everything notebook.
 
 ## Current implementation status
 
-This repository currently contains the analysis scaffold, table contracts,
-Spark-agnostic method library, Databricks source-notebook entry points, and local
-tests. The notebooks default to `execution_mode=manifest_only`; they do not yet
-read production tables, write Delta outputs, or constitute a completed
-Databricks analysis run.
+This repository contains a runnable Databricks workflow implementation. The
+notebooks are thin entry points over `telegram_descriptive.pipeline.spark_stages`,
+which performs source reads, canonical silver-table construction, estimator
+orchestration, gold-frame builds, descriptive summaries, network extraction,
+robustness rows, validation/gap rows, and reporting manifests.
+
+The notebooks default to `execution_mode=manifest_only`, which performs no
+source reads or writes. To run the workflow end to end in Databricks, set:
+
+```text
+execution_mode=smoke  # bounded development run
+execution_mode=core   # full table run
+write_outputs=true
+run_id=<stable run identifier>
+```
+
+The random-walk population-estimation pillar is explicitly gated: if exposure
+and validation lineage tables are unavailable, the workflow writes no-claim gap
+rows rather than fabricating representativeness or coverage estimates.
 
 ## Start here
 

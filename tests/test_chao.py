@@ -1,4 +1,4 @@
-from telegram_descriptive.estimation.chao import chao2
+from telegram_descriptive.estimation.chao import chao2, chao2_from_counts
 
 
 def test_chao2_bias_corrected_no_doubletons():
@@ -18,3 +18,6 @@ def test_chao2_empty_samples():
     assert estimate.observed_species == 0
     assert estimate.estimate == 0
 
+
+def test_chao2_from_counts_matches_incidence_formula():
+    assert chao2_from_counts(samples=3, observed_species=4, singletons=3, doubletons=0) == 6

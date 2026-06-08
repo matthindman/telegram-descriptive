@@ -2,6 +2,9 @@ resources:
   jobs:
     telegram_descriptive_pipeline:
       name: telegram_descriptive_pipeline
+      # Safe default: bundled job tasks run in manifest_only mode unless a Databricks
+      # run overrides execution_mode to smoke/core/full. manifest_only performs no
+      # source reads and writes no Delta outputs.
       tasks:
         - task_key: "00_data_inventory_and_contracts"
           notebook_task:
@@ -93,8 +96,10 @@ resources:
               execution_mode: "manifest_only"
         - task_key: "08_channel_message_analysis_frame"
           depends_on:
+            - task_key: "05_post_ingestion_audit"
             - task_key: "06b_language_validation_and_adjudication"
             - task_key: "07_topic_taxonomy_and_classification"
+            - task_key: "11_link_forwarding_networks"
           notebook_task:
             notebook_path: "../notebooks/08_channel_message_analysis_frame.py"
             base_parameters:
@@ -121,7 +126,7 @@ resources:
               execution_mode: "manifest_only"
         - task_key: "11_link_forwarding_networks"
           depends_on:
-            - task_key: "08_channel_message_analysis_frame"
+            - task_key: "05_post_ingestion_audit"
           notebook_task:
             notebook_path: "../notebooks/11_link_forwarding_networks.py"
             base_parameters:
@@ -157,4 +162,3 @@ resources:
               output_catalog: "${var.output_catalog}"
               output_schema: "${var.output_schema}"
               execution_mode: "manifest_only"
-
