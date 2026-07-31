@@ -1,4 +1,7 @@
 # Databricks notebook source
+# MAGIC %run ./_bootstrap
+
+# COMMAND ----------
 # MAGIC %md
 # MAGIC # 14 Reporting Exports
 # MAGIC
@@ -12,4 +15,3 @@ create_standard_widgets()
 config = project_config_from_widgets()
 result = run_stage("14", spark, config)  # noqa: F821
 print_manifest(result)
-

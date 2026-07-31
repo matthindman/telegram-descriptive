@@ -9,6 +9,16 @@ def test_contract_registry_contains_planned_gold_tables():
     assert "gold_population_estimates" in CONTRACTS
 
 
+def test_random_walk_contract_preserves_source_visit_recurrence():
+    contract = get_contract("silver_random_walk_exposures")
+
+    assert contract.primary_key == ("crawl_run_id", "batch_id", "target_channel_id")
+    assert "target_was_known_at_extraction" in contract.required_names
+    assert "post_burn_in_flag" in contract.required_names
+    assert "silver_random_walk_source_visits" in CONTRACTS
+    assert "silver_random_walk_seed_frame" in CONTRACTS
+
+
 def test_contract_registry_matches_output_manifest():
     planned = set(OutputTables().planned_tables)
 

@@ -468,6 +468,16 @@ def _empty_random_walk_outputs(ctx: PipelineContext, reason: str) -> dict[str, A
     ctx.write("silver_random_walk_events", empty_contract_df(ctx, "silver_random_walk_events"))
     if not ctx.source_exists(ctx.target("silver_random_walk_exposures")):
         ctx.write("silver_random_walk_exposures", empty_contract_df(ctx, "silver_random_walk_exposures"))
+    if not ctx.source_exists(ctx.target("silver_random_walk_source_visits")):
+        ctx.write(
+            "silver_random_walk_source_visits",
+            empty_contract_df(ctx, "silver_random_walk_source_visits"),
+        )
+    if not ctx.source_exists(ctx.target("silver_random_walk_seed_frame")):
+        ctx.write(
+            "silver_random_walk_seed_frame",
+            empty_contract_df(ctx, "silver_random_walk_seed_frame"),
+        )
     if not ctx.source_exists(ctx.target("silver_random_walk_validations")):
         ctx.write("silver_random_walk_validations", empty_contract_df(ctx, "silver_random_walk_validations"))
     validations = _validation_rows(
@@ -513,6 +523,16 @@ def stage_01(ctx: PipelineContext) -> dict[str, Any]:
     ctx.write("silver_random_walk_events", _contract_select(events, "silver_random_walk_events"))
     if not ctx.source_exists(ctx.target("silver_random_walk_exposures")):
         ctx.write("silver_random_walk_exposures", empty_contract_df(ctx, "silver_random_walk_exposures"))
+    if not ctx.source_exists(ctx.target("silver_random_walk_source_visits")):
+        ctx.write(
+            "silver_random_walk_source_visits",
+            empty_contract_df(ctx, "silver_random_walk_source_visits"),
+        )
+    if not ctx.source_exists(ctx.target("silver_random_walk_seed_frame")):
+        ctx.write(
+            "silver_random_walk_seed_frame",
+            empty_contract_df(ctx, "silver_random_walk_seed_frame"),
+        )
     if not ctx.source_exists(ctx.target("silver_random_walk_validations")):
         ctx.write("silver_random_walk_validations", empty_contract_df(ctx, "silver_random_walk_validations"))
     validations = _validation_rows(
@@ -531,65 +551,265 @@ def stage_01(ctx: PipelineContext) -> dict[str, Any]:
     return {"stage": "01", "written": ["silver_random_walk_events"], "population_estimation_blocked": True}
 
 
+def _write_population_gap(ctx: PipelineContext, flags: list[str]) -> dict[str, Any]:
+    diagnostic_flags = list(dict.fromkeys([*flags, "no_population_claim"]))
+    rows = [
+        {
+            "estimate_version": ctx.config.analysis.estimate_version,
+            "estimand": "reachable_public_channel_count",
+            "metric_name": "follower_count",
+            "threshold": float(threshold),
+            "model": "random_walk_gap",
+            "observed_n": None,
+            "estimate": None,
+            "lower_ci": None,
+            "upper_ci": None,
+            "diagnostic_flags": diagnostic_flags,
+            "samples": None,
+            "common_effort": None,
+            "singletons": None,
+            "doubletons": None,
+            "offset_n": None,
+            "rarity_indicator": None,
+        }
+        for threshold in ctx.config.analysis.member_thresholds
+    ]
+    df = ctx.spark.createDataFrame(
+        rows,
+        _schema_for_contract(get_contract("gold_population_estimates")),
+    )
+    replace_where = (
+        f"estimate_version = {_sql_literal(ctx.config.analysis.estimate_version)} "
+        "AND estimand = 'reachable_public_channel_count'"
+    )
+    ctx.write("gold_population_estimates", df, replace_where=replace_where)
+    return {"stage": "02", "status": "gap_written", "diagnostic_flags": diagnostic_flags}
+
+
 def stage_02(ctx: PipelineContext) -> dict[str, Any]:
     exposures = ctx.target_df("silver_random_walk_exposures")
-    if exposures is None or not _has_rows(exposures):
-        rows = [
-            {
-                "estimate_version": ctx.config.analysis.estimate_version,
-                "estimand": "reachable_public_channel_count",
-                "metric_name": "follower_count",
-                "threshold": float(threshold),
-                "model": "random_walk_gap",
-                "observed_n": None,
-                "estimate": None,
-                "lower_ci": None,
-                "upper_ci": None,
-                "diagnostic_flags": ["missing_random_walk_exposures", "no_population_claim"],
-            }
-            for threshold in ctx.config.analysis.member_thresholds
-        ]
-        df = ctx.spark.createDataFrame(rows, _schema_for_contract(get_contract("gold_population_estimates")))
-        ctx.write("gold_population_estimates", df, replace_where=f"estimate_version = {_sql_literal(ctx.config.analysis.estimate_version)} AND estimand = 'reachable_public_channel_count'")
-        return {"stage": "02", "status": "gap_written"}
+    source_visits = ctx.target_df("silver_random_walk_source_visits")
+    seed_frame = ctx.target_df("silver_random_walk_seed_frame")
+    inputs = {
+        "silver_random_walk_exposures": exposures,
+        "silver_random_walk_source_visits": source_visits,
+        "silver_random_walk_seed_frame": seed_frame,
+    }
+    missing_tables = [name for name, frame in inputs.items() if not _has_rows(frame)]
+    if missing_tables:
+        return _write_population_gap(
+            ctx,
+            [f"missing_input:{name}" for name in missing_tables],
+        )
 
-    eligible = exposures.where(F.col("eligible_flag") == F.lit(True))
+    missing_columns = []
+    for name, frame in inputs.items():
+        assert frame is not None
+        missing = get_contract(name).validate_columns(frame.columns)
+        if missing:
+            missing_columns.append(f"{name}:{','.join(missing)}")
+    if missing_columns:
+        return _write_population_gap(
+            ctx,
+            [f"missing_required_columns:{value}" for value in missing_columns],
+        )
+
+    assert exposures is not None
+    assert source_visits is not None
+    assert seed_frame is not None
+    run_id = ctx.config.analysis.run_id
+    run_exposures = exposures.where(F.col("crawl_run_id") == F.lit(run_id))
+    run_visits = source_visits.where(F.col("crawl_run_id") == F.lit(run_id))
+    run_seed_frame = seed_frame.where(F.col("crawl_run_id") == F.lit(run_id))
+    empty_run_inputs = [
+        name
+        for name, frame in (
+            ("silver_random_walk_exposures", run_exposures),
+            ("silver_random_walk_source_visits", run_visits),
+            ("silver_random_walk_seed_frame", run_seed_frame),
+        )
+        if not _has_rows(frame)
+    ]
+    if empty_run_inputs:
+        return _write_population_gap(
+            ctx,
+            [f"missing_run_rows:{name}" for name in empty_run_inputs],
+        )
+
+    duplicate_exposures = (
+        run_exposures.groupBy("crawl_run_id", "batch_id", "target_channel_id")
+        .count()
+        .where(F.col("count") > 1)
+    )
+    if _has_rows(duplicate_exposures):
+        return _write_population_gap(ctx, ["duplicate_source_visit_exposures"])
+
+    unclassified_exposures = run_exposures.where(
+        (F.col("eligible_flag") == F.lit(True)) & F.col("post_burn_in_flag").isNull()
+    )
+    if _has_rows(unclassified_exposures):
+        return _write_population_gap(ctx, ["missing_burn_in_classification"])
+
+    post_visits = run_visits.where(F.col("post_burn_in_flag") == F.lit(True))
+    if not _has_rows(post_visits):
+        return _write_population_gap(ctx, ["missing_post_burn_in_visits"])
+    bad_candidate_mode = run_visits.where(
+        F.col("candidate_mode").isNull()
+        | (F.lower(F.trim(F.col("candidate_mode"))) != F.lit("all_valid"))
+    )
+    if _has_rows(bad_candidate_mode):
+        return _write_population_gap(ctx, ["candidate_mode_not_all_valid"])
+    uneven_lookback = run_visits.where(
+        F.col("fixed_lookback_flag").isNull()
+        | (F.col("fixed_lookback_flag") != F.lit(True))
+    )
+    if _has_rows(uneven_lookback):
+        return _write_population_gap(ctx, ["fixed_lookback_not_confirmed"])
+
+    chains = (
+        post_visits.select("chain_id")
+        .where(F.col("chain_id").isNotNull() & (F.trim(F.col("chain_id")) != ""))
+        .dropDuplicates(["chain_id"])
+    )
+    samples = chains.count()
+    if samples < 2:
+        return _write_population_gap(ctx, ["fewer_than_two_independent_chains"])
+
+    eligible_post_exposures = run_exposures.where(
+        (F.col("post_burn_in_flag") == F.lit(True))
+        & (F.col("eligible_flag") == F.lit(True))
+    )
+    orphan_exposures = eligible_post_exposures.join(chains, "chain_id", "left_anti")
+    if _has_rows(orphan_exposures):
+        return _write_population_gap(ctx, ["exposure_chain_missing_from_source_visits"])
+    post_exposures = eligible_post_exposures.join(chains, "chain_id", "inner")
+    missing_exposure_lineage = post_exposures.where(
+        F.col("sequence_id").isNull()
+        | F.col("visit_id").isNull()
+        | F.col("batch_id").isNull()
+        | F.col("exposure_id").isNull()
+        | F.col("exposure_timestamp").isNull()
+    )
+    if _has_rows(missing_exposure_lineage):
+        return _write_population_gap(ctx, ["missing_exposure_ordering_lineage"])
+    bad_exposure_mode = run_exposures.where(
+        (F.col("eligible_flag") == F.lit(True))
+        & (
+            F.col("candidate_mode").isNull()
+            | (F.lower(F.trim(F.col("candidate_mode"))) != F.lit("all_valid"))
+        )
+    )
+    if _has_rows(bad_exposure_mode):
+        return _write_population_gap(ctx, ["exposure_candidate_mode_not_all_valid"])
+
+    efforts = post_exposures.groupBy("chain_id").agg(F.count("*").alias("effort"))
+    chain_efforts = chains.join(efforts, "chain_id", "left").fillna({"effort": 0})
+    common_effort = int(chain_efforts.agg(F.min("effort").alias("effort")).first()["effort"])
+    if common_effort <= 0:
+        return _write_population_gap(ctx, ["zero_common_post_burn_in_effort"])
+
+    effort_order = Window.partitionBy("chain_id").orderBy(
+        F.col("exposure_timestamp"),
+        F.col("sequence_id"),
+        F.col("visit_id"),
+        F.col("exposure_id"),
+    )
+    equalized = post_exposures.withColumn(
+        "_effort_index",
+        F.row_number().over(effort_order),
+    ).where(F.col("_effort_index") <= F.lit(common_effort))
+
+    seed_targets = run_seed_frame.where(F.col("eligible_flag") == F.lit(True)).select(
+        F.col("seed_channel_id").alias("target_channel_id"),
+        F.col("follower_count").cast("double").alias("follower_count"),
+    )
+    pre_burn_in_targets = run_exposures.where(
+        (F.col("eligible_flag") == F.lit(True))
+        & (F.col("post_burn_in_flag") == F.lit(False))
+    ).select(
+        "target_channel_id",
+        F.col("follower_count").cast("double").alias("follower_count"),
+    )
+    offset_targets = seed_targets.unionByName(pre_burn_in_targets).groupBy(
+        "target_channel_id"
+    ).agg(F.max("follower_count").alias("follower_count"))
+
+    missing_audience = equalized.where(F.col("follower_count").isNull()).limit(1)
+    missing_offset_audience = offset_targets.where(F.col("follower_count").isNull()).limit(1)
+    if _has_rows(missing_audience) or _has_rows(missing_offset_audience):
+        return _write_population_gap(ctx, ["missing_follower_count_for_thresholding"])
+
+    offset_ids = offset_targets.select("target_channel_id")
     rows = []
     for threshold in ctx.config.analysis.member_thresholds:
-        above = eligible.where(_col(eligible, "follower_count", cast="double") >= F.lit(float(threshold)))
-        incidence = above.groupBy("target_channel_id").agg(F.countDistinct("chain_id").alias("chain_incidence"))
+        offset_n = offset_targets.where(
+            F.col("follower_count") >= F.lit(float(threshold))
+        ).count()
+        above = equalized.join(offset_ids, "target_channel_id", "left_anti").where(
+            F.col("follower_count") >= F.lit(float(threshold))
+        )
+        incidence = above.groupBy("target_channel_id").agg(
+            F.countDistinct("chain_id").alias("chain_incidence")
+        )
         summary = incidence.agg(
             F.count("*").alias("observed_n"),
             F.sum(F.when(F.col("chain_incidence") == 1, 1).otherwise(0)).alias("q1"),
             F.sum(F.when(F.col("chain_incidence") == 2, 1).otherwise(0)).alias("q2"),
         ).first()
-        chains = above.agg(F.countDistinct("chain_id").alias("chains")).first()["chains"] or 0
-        observed = float(summary["observed_n"] or 0)
-        q1 = float(summary["q1"] or 0)
-        q2 = float(summary["q2"] or 0)
-        estimate = chao2_from_counts(
-            samples=int(chains),
-            observed_species=int(observed),
-            singletons=int(q1),
-            doubletons=int(q2),
+        observed_post = int(summary["observed_n"] or 0)
+        q1 = int(summary["q1"] or 0)
+        q2 = int(summary["q2"] or 0)
+        post_bound = chao2_from_counts(
+            samples=int(samples),
+            observed_species=observed_post,
+            singletons=q1,
+            doubletons=q2,
         )
+        observed = int(offset_n) + observed_post
+        estimate = float(offset_n) + post_bound
+        rarity = (estimate - observed) / estimate if estimate > 0 else 0.0
         rows.append(
             {
                 "estimate_version": ctx.config.analysis.estimate_version,
                 "estimand": "reachable_public_channel_count",
                 "metric_name": "follower_count",
                 "threshold": float(threshold),
-                "model": "chao2_incidence",
-                "observed_n": observed,
-                "estimate": float(max(observed, estimate)),
-                "lower_ci": observed,
+                "model": "chao2_bias_corrected_equal_effort",
+                "observed_n": float(observed),
+                "estimate": estimate,
+                "lower_ci": None,
                 "upper_ci": None,
-                "diagnostic_flags": [],
+                "diagnostic_flags": [
+                    "post_burn_in_only",
+                    "equal_effort",
+                    "pre_burn_in_offset_included",
+                    "lower_bound_not_point_estimate",
+                    "no_bootstrap_ci",
+                    "raw_threshold_estimate_not_monotonized",
+                ],
+                "samples": int(samples),
+                "common_effort": common_effort,
+                "singletons": q1,
+                "doubletons": q2,
+                "offset_n": int(offset_n),
+                "rarity_indicator": float(rarity),
             }
         )
-    df = ctx.spark.createDataFrame(rows, _schema_for_contract(get_contract("gold_population_estimates")))
-    ctx.write("gold_population_estimates", df, replace_where=f"estimate_version = {_sql_literal(ctx.config.analysis.estimate_version)} AND estimand = 'reachable_public_channel_count'")
-    return {"stage": "02", "status": "estimates_written"}
+    df = ctx.spark.createDataFrame(
+        rows,
+        _schema_for_contract(get_contract("gold_population_estimates")),
+    )
+    replace_where = (
+        f"estimate_version = {_sql_literal(ctx.config.analysis.estimate_version)} "
+        "AND estimand = 'reachable_public_channel_count'"
+    )
+    ctx.write("gold_population_estimates", df, replace_where=replace_where)
+    return {
+        "stage": "02",
+        "status": "estimates_written",
+        "samples": int(samples),
+        "common_effort": common_effort,
+    }
 
 
 def _ranked_metrics(ctx: PipelineContext) -> DataFrame:
@@ -1499,24 +1719,39 @@ def stage_12(ctx: PipelineContext) -> dict[str, Any]:
     network = ctx.target_df("gold_network_summaries")
     random_walk = ctx.target_df("silver_random_walk_exposures")
     rows = []
-    for kappa in (1, 10, 30, 100):
+    random_walk_available = _has_rows(random_walk)
+    for kappa in (1, 10, 30, 100, float("inf")):
+        scenario = "kappa_infinity" if kappa == float("inf") else f"kappa_{int(kappa)}"
+        if kappa == float("inf"):
+            notes = (
+                "No finite omission bound is possible for an unseeded, externally unlinked "
+                "audience island."
+            )
+        elif not random_walk_available:
+            notes = "Random-walk exposure records are missing; no omission bound was computed."
+        else:
+            notes = (
+                "Exposure rows alone are insufficient. Stable crawl-discovery clusters, "
+                "dependency-adjusted entry opportunities, audience shares, and a calibrated "
+                "lower-tail visibility benchmark are required."
+            )
+        if network is None:
+            notes += " Organic network summaries are also missing."
         rows.append(
             {
                 "run_id": ctx.config.analysis.run_id,
                 "check_name": "missed_audience_dark_mass",
-                "scenario": f"kappa_{kappa}",
-                "metric": "omission_bound_available",
-                "baseline_value": 0.0,
-                "scenario_value": None if random_walk is None or not _has_rows(random_walk) else float(kappa),
+                "scenario": scenario,
+                "metric": "complete_omission_probability_bound",
+                "baseline_value": None,
+                "scenario_value": None,
                 "delta": None,
-                "notes": "Requires random-walk exposures for empirical bounds; organic network summaries are available separately."
-                if network is not None
-                else "Network summaries missing.",
+                "notes": notes,
             }
         )
     df = ctx.spark.createDataFrame(rows, _schema_for_contract(get_contract("gold_robustness_summaries")))
     ctx.write("gold_robustness_summaries", df, replace_where=f"run_id = {_sql_literal(ctx.config.analysis.run_id)} AND check_name = 'missed_audience_dark_mass'")
-    return {"stage": "12", "status": "missed_audience_sensitivity_written"}
+    return {"stage": "12", "status": "blocked", "calibrated_inputs_available": False}
 
 
 def stage_13(ctx: PipelineContext) -> dict[str, Any]:

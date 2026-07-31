@@ -29,8 +29,31 @@ class CrawlLineageRequirements:
     exposures: tuple[str, ...] = (
         "crawl_run_id",
         "chain_id",
+        "sequence_id",
+        "visit_id",
+        "batch_id",
         "exposure_id",
+        "source_channel_id",
         "target_channel_id",
+        "eligible_flag",
+        "target_was_known_at_extraction",
+        "candidate_mode",
+        "post_burn_in_flag",
+    )
+    source_visits: tuple[str, ...] = (
+        "crawl_run_id",
+        "chain_id",
+        "sequence_id",
+        "visit_id",
+        "source_channel_id",
+        "candidate_mode",
+        "fixed_lookback_flag",
+        "post_burn_in_flag",
+    )
+    seed_frame: tuple[str, ...] = (
+        "crawl_run_id",
+        "seed_channel_id",
+        "frame_recorded_at",
         "eligible_flag",
     )
 
@@ -51,7 +74,13 @@ def visible_bronze_gap_summary(observed_columns: set[str] | None = None) -> dict
 
     observed = observed_columns or set(VISIBLE_RANDOM_WALK_BRONZE_COLUMNS)
     requirements = CrawlLineageRequirements()
-    required = set(requirements.walk_events) | set(requirements.validations) | set(requirements.exposures)
+    required = (
+        set(requirements.walk_events)
+        | set(requirements.validations)
+        | set(requirements.exposures)
+        | set(requirements.source_visits)
+        | set(requirements.seed_frame)
+    )
     missing = sorted(required - observed)
     usable_parentage_fields = sorted(observed & {"depth", "id", "parentId", "timestamp", "status"})
     return {
@@ -64,4 +93,3 @@ def visible_bronze_gap_summary(observed_columns: set[str] | None = None) -> dict
             else ""
         ),
     }
-

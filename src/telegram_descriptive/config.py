@@ -82,6 +82,8 @@ class OutputTables:
         "silver_telegram_edges",
         "silver_random_walk_events",
         "silver_random_walk_exposures",
+        "silver_random_walk_source_visits",
+        "silver_random_walk_seed_frame",
         "silver_random_walk_validations",
         "silver_ranked_metrics",
         "silver_lid_segments",
