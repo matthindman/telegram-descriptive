@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telegram undirected network atlas</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f7f6f2;color:#173042;font:15px/1.5 system-ui,sans-serif}
+header{padding:22px 28px 16px;border-bottom:1px solid #d9dedb}h1{font-size:25px;margin:0 0 4px;font-weight:650}
+header p{margin:0;color:#64717b}.toolbar{display:flex;align-items:center;gap:8px;padding:14px 28px;flex-wrap:wrap}
+button{border:1px solid #b8c6c8;background:#f7f6f2;color:#173042;padding:8px 15px;border-radius:6px;cursor:pointer;font:inherit}
+button[aria-pressed="true"]{background:#173042;color:#fff;border-color:#173042}button:hover{filter:brightness(.96)}
+.spacer{flex:1}.hint{color:#64717b;font-size:13px}.workspace{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:0;height:calc(100vh - 195px);min-height:500px}
+.viewport{position:relative;overflow:hidden;touch-action:none;border-top:1px solid #d9dedb;border-bottom:1px solid #d9dedb}
+canvas{width:100%;height:100%;display:block;cursor:grab}canvas.dragging{cursor:grabbing}aside{padding:21px;border-left:1px solid #d9dedb;overflow:auto}
+aside h2{font-size:17px;margin:0 0 10px}aside p{margin:8px 0 16px}.label{font-size:12px;color:#64717b;text-transform:uppercase;letter-spacing:.05em}.value{font-size:25px;font-weight:650;margin-bottom:12px}.note{font-size:13px;color:#64717b}#details{padding-top:12px;border-top:1px solid #d9dedb;margin-top:18px}
+footer{padding:12px 28px;font-size:12px;color:#64717b}a{color:#087f8c}.pill{display:inline-block;background:#e0eded;padding:2px 7px;border-radius:4px;font-size:12px}
+@media(max-width:800px){.workspace{grid-template-columns:1fr;height:65vh}aside{display:none}header{padding:18px}h1{font-size:21px}.toolbar{padding:10px 18px}.hint{display:none}footer{padding:12px 18px}}
+</style>
+</head>
+<body>
+<header><h1>Telegram’s observed link network</h1><p>__NODE_COUNT__ handles · __LINK_COUNT__ undirected links · __FILTER_NOTE__</p></header>
+<div class="toolbar" role="toolbar" aria-label="Network view controls">
+<button id="full" aria-pressed="true">All components</button><button id="groups" aria-pressed="false">Explore main component</button>
+<button id="matrix" aria-pressed="false">Adjacency density</button>
+<span class="spacer"></span><span class="hint">Drag to pan · scroll to zoom · hover over a group</span>
+<button id="minus" aria-label="Zoom out">−</button><button id="plus" aria-label="Zoom in">+</button><button id="fit">Fit</button>
+</div>
+<div class="workspace">
+<div class="viewport" id="viewport"><canvas id="map" aria-label="Zoomable undirected network visualization"></canvas></div>
+<aside>
+<h2 id="view-title">All observed links</h2>
+<p class="note" id="view-description">The main component is aggregated into communities. The inset shows individual nodes and links in all __SMALL_COMPONENTS__ smaller components.</p>
+<div class="label">Unique undirected links</div><div class="value">__LINK_COUNT__</div>
+<div class="label">Handles with one neighbor</div><div class="value">__LEAF_PERCENT__</div>
+<div class="label">In the main component</div><div class="value">__GIANT_PERCENT__</div>
+<div id="details" aria-live="polite"><span class="pill">How to read this</span><p class="note">Circle area follows community size. Lines combine links between groups; within-group links are counted separately. Layout distance is not a similarity measure.</p></div>
+</aside>
+</div>
+<footer>Missing validation remains unknown, not invalid. Missing outgoing links remain unobserved. <a href="visualization_methods.txt">Methods and research</a> · <a href="undirected_graph.pdf">Full-resolution PDF</a></footer>
+<script>
+const atlasData = __ATLAS_DATA__;
+const image = new Image(); image.src = "data:image/png;base64,__IMAGE_DATA__";
+const matrixImage = new Image(); matrixImage.src = "data:image/png;base64,__MATRIX_DATA__";
+const canvas = document.getElementById('map'), ctx = canvas.getContext('2d');
+const viewport = document.getElementById('viewport'), detail = document.getElementById('details');
+const number = new Intl.NumberFormat('en-US');
+let mode='full', width=0, height=0, scale=1, ox=0, oy=0, hover=null, drag=null, ready=false;
+const byId = new Map(atlasData.nodes.map(n=>[n.id,n]));
+const xs=atlasData.nodes.map(n=>n.x), ys=atlasData.nodes.map(n=>n.y);
+const bounds={x0:Math.min(...xs)-13,x1:Math.max(...xs)+13,y0:Math.min(...ys)-13,y1:Math.max(...ys)+13};
+function fit(){
+  const pic=mode==='matrix'?matrixImage:image;
+  const b=mode==='groups'?bounds:{x0:0,y0:0,x1:pic.width,y1:pic.height};
+  scale=Math.min(width/(b.x1-b.x0),height/(b.y1-b.y0))*.96;
+  ox=(width-(b.x1+b.x0)*scale)/2;oy=(height-(b.y1+b.y0)*scale)/2;draw();
+}
+function resize(){
+  const b=viewport.getBoundingClientRect(),d=window.devicePixelRatio||1;width=b.width;height=b.height;
+  canvas.width=Math.round(width*d);canvas.height=Math.round(height*d);ctx.setTransform(d,0,0,d,0,0);if(ready)fit();
+}
+function draw(){
+  ctx.clearRect(0,0,width,height);ctx.fillStyle='#f7f6f2';ctx.fillRect(0,0,width,height);
+  if(!ready)return;
+  if(mode!=='groups'){const pic=mode==='matrix'?matrixImage:image;ctx.drawImage(pic,ox,oy,pic.width*scale,pic.height*scale);return;}
+  for(const e of atlasData.edges){
+    const a=byId.get(e[0]),b=byId.get(e[1]);
+    ctx.beginPath();ctx.moveTo(a.x*scale+ox,a.y*scale+oy);ctx.lineTo(b.x*scale+ox,b.y*scale+oy);
+    ctx.strokeStyle=hover&&(hover.id===a.id||hover.id===b.id)?'#315964':'rgba(77,112,127,.32)';
+    ctx.lineWidth=(.2+1.6*Math.log1p(e[2])/Math.log1p(atlasData.maxEdge))*Math.max(.6,Math.sqrt(scale/5));ctx.stroke();
+  }
+  for(const n of atlasData.nodes){
+    const r=Math.max(.65,.012*Math.sqrt(n.nodes)*scale);
+    ctx.beginPath();ctx.arc(n.x*scale+ox,n.y*scale+oy,r,0,2*Math.PI);
+    ctx.fillStyle=hover&&hover.id===n.id?'#bf5825':'rgba(8,127,140,.82)';ctx.fill();
+    if(r>3){ctx.strokeStyle='#f7f6f2';ctx.lineWidth=.6;ctx.stroke();}
+  }
+  for(const n of atlasData.nodes.filter(n=>n.rank>0&&n.rank<=8)){
+    const offsets={3:[5,-18],4:[5,18],5:[24,25],6:[22,-7],7:[-20,18]};const d=offsets[n.rank]||[5,-5];
+    const px=n.x*scale+ox,py=n.y*scale+oy,x=px+d[0],y=py+d[1];
+    if(offsets[n.rank]){ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(x,y);ctx.strokeStyle='#64717b';ctx.lineWidth=.6;ctx.stroke();}
+    ctx.font='bold 13px system-ui';
+    ctx.lineWidth=4;ctx.strokeStyle='#f7f6f2';ctx.strokeText(String(n.rank),x,y);ctx.fillStyle='#173042';ctx.fillText(String(n.rank),x,y);
+  }
+}
+function zoom(f,x=width/2,y=height/2){const next=Math.min(120,Math.max(.03,scale*f));const q=next/scale;ox=x-(x-ox)*q;oy=y-(y-oy)*q;scale=next;draw();}
+function setMode(next){mode=next;hover=null;
+ for(const id of ['full','groups','matrix'])document.getElementById(id).setAttribute('aria-pressed',String(mode===id));
+ document.getElementById('view-title').textContent=mode==='groups'?'__GIANT_COMMUNITIES__ connected groups':mode==='matrix'?'Every original link':'All observed links';
+ document.getElementById('view-description').textContent=mode==='groups'?'Each circle aggregates a Leiden community in the main component. All connections between groups are present. Internal edges are counted inside each group.':mode==='matrix'?'The symmetric adjacency matrix bins all original nodes and links into pixels. It uses the same node order on both axes. Each undirected edge appears twice.':'The main component is aggregated into communities. The inset shows individual nodes and links in all __SMALL_COMPONENTS__ smaller components.';
+ detail.replaceChildren();const p=document.createElement('p');p.className='note';p.textContent=mode==='groups'?'Circle area follows node count; very small groups have a minimum visible dot. Line width follows log(1 + links). Hover for exact counts. Groups are exploratory, not established topics.':mode==='matrix'?'Darker pixels contain more links. Nodes are ordered by community size, then degree within each group. Counts reconcile exactly with the underlying graph.':'Circle area follows community size. Lines combine links between groups; within-group links are counted separately. Layout distance is not a similarity measure.';detail.append(p);fit();
+}
+function showGroup(n){
+ detail.replaceChildren();const h=document.createElement('h2');h.textContent='Group '+n.id;detail.append(h);
+ for(const [label,value] of [['Handles',number.format(n.nodes)],['Internal links',number.format(n.internal)],['Example hub',n.handle],['Hub neighbors',number.format(n.degree)]]){const p=document.createElement('p');const small=document.createElement('span');small.className='label';small.textContent=label;p.append(small,document.createElement('br'),document.createTextNode(value));detail.append(p);}
+ const p=document.createElement('p');p.className='note';p.textContent='The example is the highest-degree handle in this group, not a semantic label.';detail.append(p);
+}
+canvas.addEventListener('wheel',e=>{e.preventDefault();const b=canvas.getBoundingClientRect();zoom(Math.exp(-e.deltaY*.0013),e.clientX-b.left,e.clientY-b.top);},{passive:false});
+canvas.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,ox,oy};canvas.setPointerCapture(e.pointerId);canvas.classList.add('dragging');});
+canvas.addEventListener('pointerup',()=>{drag=null;canvas.classList.remove('dragging');});
+canvas.addEventListener('pointercancel',()=>{drag=null;canvas.classList.remove('dragging');});
+canvas.addEventListener('pointermove',e=>{
+ if(drag){ox=drag.ox+e.clientX-drag.x;oy=drag.oy+e.clientY-drag.y;draw();return;}
+ if(mode!=='groups')return;const b=canvas.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;let candidate=null,best=Infinity;
+ for(const n of atlasData.nodes){const distance=Math.hypot(n.x*scale+ox-x,n.y*scale+oy-y),r=Math.max(5,.012*Math.sqrt(n.nodes)*scale);if(distance<r&&distance<best){best=distance;candidate=n;}}
+ if(candidate!==hover){hover=candidate;if(hover)showGroup(hover);draw();}
+});
+document.getElementById('matrix').onclick=()=>setMode('matrix');
+document.getElementById('full').onclick=()=>setMode('full');document.getElementById('groups').onclick=()=>setMode('groups');
+document.getElementById('plus').onclick=()=>zoom(1.4);document.getElementById('minus').onclick=()=>zoom(1/1.4);document.getElementById('fit').onclick=fit;
+function loaded(){ready=!!(image.naturalWidth&&matrixImage.naturalWidth);if(ready)resize();}
+image.onload=loaded;matrixImage.onload=loaded;image.onerror=()=>{detail.textContent='Embedded image failed to load.';};
+new ResizeObserver(resize).observe(viewport);loaded();
+</script>
+</body>
+</html>

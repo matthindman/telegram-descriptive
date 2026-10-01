@@ -1,0 +1,4 @@
+interface:
+  display_name: "Large Network Visualization"
+  short_description: "Research and render large, auditable networks"
+  default_prompt: "Use $large-network-visualization to build a reproducible interactive network map with explicit weighting, scalable layouts, and faithful visual encodings."
