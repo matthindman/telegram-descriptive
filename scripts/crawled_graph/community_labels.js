@@ -1,5 +1,5 @@
 // Descriptive labels belong only to the frozen reference partition.
-let semanticById=new Map(), semanticMembers=new Map(), showCommunityLabels=true, chosenCommunity=null;
+let semanticById=new Map(), semanticMembers=new Map(), showCommunityLabels=true, chosenCommunity=null, chosenPartner=null;
 let communityLabelBoxes=[],communityLabelPlan=[],communityVisible=new Map();
 const shortCommunityName=item=>D.label_display.map_names[String(item.display_id)]||item.label;
 const compactAudience=n=>new Intl.NumberFormat('en',{notation:'compact',maximumFractionDigits:1}).format(n);
@@ -25,7 +25,48 @@ function initializeCommunities(){
  $('locateCommunity').onclick=()=>locateCommunity(chosenCommunity);
  updateCommunityPanel();
 }
-function chooseCommunity(cid){chosenCommunity=cid;$('communitySelect').value=cid===null?'':String(cid);$('communityLocationNote').textContent='';if(selected>=0)setSelection(-1);updateCommunityPanel();updateNodes();requestDraw()}
+function chooseCommunity(cid){chosenCommunity=cid;chosenPartner=null;refreshPartners();$('communitySelect').value=cid===null?'':String(cid);$('communityLocationNote').textContent='';if(selected>=0)setSelection(-1);updateCommunityPanel();updateNodes();requestDraw()}
+// ---------------------------------------------------------------------------
+// Linked communities of a chosen reference community, from every observed tie (not
+// filtered by display controls). weight = sum of fractional tie weights between the
+// two groups; out/in split the pair's weight by direction: q(u,v)=1/eligible
+// outdegree(u) for each recorded u->v link. affinity = observed / expected among
+// EXTERNAL links: expected = X_A*X_B/(2X), where X_c is community c's total
+// between-community weight and 2X the sum over all communities (internal ties excluded,
+// so cohesive groups are not all scored below 1).
+let partnerEndpoints=new Set(),partnerCache=new Map(),partnerSort='weight',partnerExpanded=false,communitySizeCache=null,communityStrengthCache=null;
+function communitySizes(){if(!communitySizeCache){communitySizeCache=[];for(let i=0;i<N;i++){const c=Math.round(nval(i,8));communitySizeCache[c]=(communitySizeCache[c]||0)+1}}return communitySizeCache}
+function communityStrengths(){if(!communityStrengthCache){const n=communitySizes().length,s=new Float64Array(n),x=new Float64Array(n);let external2=0;for(let j=0;j<E;j++){const w=weightsValid[j],a=Math.round(nval(edges[j*4],8)),b=Math.round(nval(edges[j*4+1],8));s[a]+=w;s[b]+=w;if(a!==b){x[a]+=w;x[b]+=w;external2+=2*w}}communityStrengthCache={s,x,external2}}return communityStrengthCache}
+function communityPartners(cid){
+ if(partnerCache.has(cid))return partnerCache.get(cid);
+ const rows=new Map(),{s,x,external2}=communityStrengths();let external=0;
+ for(let j=0;j<E;j++){const u=edges[j*4],v=edges[j*4+1],cu=Math.round(nval(u,8)),cv=Math.round(nval(v,8));if((cu===cid)===(cv===cid))continue;
+   const insideIsU=cu===cid,inside=insideIsU?u:v,outside=insideIsU?v:u,other=insideIsU?cv:cu,bits=edges[j*4+3],w=weightsValid[j];
+   const out=(insideIsU?bits&1:bits&2)?1/nval(inside,6):0,inn=(insideIsU?bits&2:bits&1)?1/nval(outside,6):0;
+   let r=rows.get(other);if(!r){r={community:other,weight:0,out:0,in:0,ties:0};rows.set(other,r)}r.weight+=w;r.out+=out;r.in+=inn;r.ties++;external+=w}
+ for(const r of rows.values())r.affinity=r.weight*external2/(x[cid]*x[r.community]);
+ const result={rows:[...rows.values()],external,strength:s[cid]};partnerCache.set(cid,result);return result;
+}
+function refreshPartners(){
+ partnerEndpoints=new Set();if(chosenCommunity===null||!referencePartition())return;
+ for(let j=0;j<E;j++){const u=edges[j*4],v=edges[j*4+1],cu=Math.round(nval(u,8)),cv=Math.round(nval(v,8));if((cu===chosenCommunity)===(cv===chosenCommunity))continue;
+   const outside=cu===chosenCommunity?v:u,other=cu===chosenCommunity?cv:cu;if(chosenPartner===null||other===chosenPartner)partnerEndpoints.add(outside)}
+}
+function setPartner(cid){chosenPartner=cid===chosenPartner?null:cid;refreshPartners();updateCommunityPanel();updateNodes();requestDraw()}
+function partnerName(cid){const item=semanticById.get(cid);return item?`C${item.display_id} · ${shortCommunityName(item)}`:`Group ${cid+1}`}
+function partnerHTML(cid){
+ // Affinity is unstable for tiny satellite groups whose few outside links all go to this
+ // group (they all reach the same maximum), so the affinity ranking uses real groups only.
+ const {rows,external,strength}=communityPartners(cid),minTies=10,minSize=20,sizes=communitySizes();
+ const list=(partnerSort==='affinity'?rows.filter(r=>r.ties>=minTies&&sizes[r.community]>=minSize).sort((a,b)=>b.affinity-a.affinity||b.weight-a.weight):rows.slice().sort((a,b)=>b.weight-a.weight)).slice(0,partnerExpanded?40:10);
+ const pct=x=>(100*x).toFixed(x<.01?1:0)+'%',fmtW=x=>x<.01?x.toExponential(1):x.toFixed(x<1?3:2);
+ return `<div class="partners"><div class="partnersHead"><b>Linked communities</b><span class="sortGroup" role="group" aria-label="Sort linked communities"><button type="button" data-psort="weight" aria-pressed="${partnerSort==='weight'}">Weight</button><button type="button" data-psort="affinity" aria-pressed="${partnerSort==='affinity'}">Affinity</button></span></div>
+ <p class="hint">${fmt(rows.length)} linked groups · external weight ${fmtW(external)} (${pct(external/strength)} of this group's link weight). Out / in: share of each pair's weight from links this group's channels make, or receive. Affinity = observed ÷ expected from both groups' external (between-group) link weight; above 1 means more than expected${partnerSort==='affinity'?`; ranked among partners with at least ${minSize} channels and ${minTies} ties`:''}. All channels, independent of filters. Click a row to show only that pair's ties.</p>
+ <ol class="partnerList">${list.map(r=>`<li><button type="button" data-partner="${r.community}" aria-pressed="${chosenPartner===r.community}" title="${escapeHTML(partnerName(r.community))}"><span class="pRow1"><i style="background:${PALETTE[colorIndex.reference[(semanticMembers.get(r.community)||[firstMember(r.community)])[0]]]}"></i><span class="pName">${escapeHTML(partnerName(r.community))}</span><span class="pNum">${fmtW(r.weight)}</span></span><span class="pRow2">${pct(r.weight/external)} of external · out ${pct(r.out/(r.weight||1))} / in ${pct(r.in/(r.weight||1))} · ×${r.affinity.toFixed(r.affinity<10?1:0)} affinity · ${fmt(r.ties)} ties · ${fmt(sizes[r.community])} ch.</span></button></li>`).join('')}</ol>
+ <div class="partnerFoot">${rows.length>10?`<button type="button" id="partnerMore">${partnerExpanded?'Show fewer':'Show more'}</button>`:''}${chosenPartner!==null?`<button type="button" id="partnerAll">Show all linked groups</button>`:''}</div>
+ </div>`;
+}
+let firstMemberCache=null;function firstMember(cid){if(!firstMemberCache){firstMemberCache=new Map();for(let i=0;i<N;i++){const c=Math.round(nval(i,8));if(!firstMemberCache.has(c))firstMemberCache.set(c,i)}}return firstMemberCache.get(cid)??0}
 function updateCommunityPanel(){
  $('communitySelect').value=chosenCommunity===null?'':String(chosenCommunity);
  const available=referencePartition();$('communityRanking').querySelectorAll('[data-community]').forEach(b=>{b.disabled=!available;b.setAttribute('aria-pressed',String(available&&Number(b.dataset.community)===chosenCommunity))});$('clearCommunity').hidden=chosenCommunity===null;$('communitySelect').disabled=!available;$('communitySearch').disabled=!available;$('locateCommunity').disabled=!available||chosenCommunity===null;
@@ -33,8 +74,12 @@ function updateCommunityPanel(){
  const item=semanticById.get(chosenCommunity);if(!available||!item){$('communityReport').innerHTML='';return}
  const cv=item.evidence_coverage;
  const rows=item.channel_annotations||[];
- $('communityReport').innerHTML=`<h2>C${item.display_id} · ${escapeHTML(item.label)}</h2><p class="hint">${escapeHTML(item.confidence)} confidence · ${fmt(item.nodes)} channels · ${fmt(item.subscribers)} summed subscribers</p><p>${escapeHTML(item.description)}</p><p class="hint">Usable evidence: largest ${cv.top.usable}/${cv.top.sampled}; random others ${cv.random.usable}/${cv.random.sampled}. ${cv.random.sampled===0?'Small-group census; no remaining channels.':''}</p><details><summary>Evidence and qualifications</summary><p><b>Largest channels:</b> ${escapeHTML(item.top_summary)}</p><p><b>Random others:</b> ${escapeHTML(item.random_summary)}</p><p><b>Exceptions:</b> ${item.counterexamples.map(escapeHTML).join('; ')||'None identified in the inspected sample.'}</p><p>${item.limitations.map(escapeHTML).join(' ')}</p><p>Current public previews; historical identity and crawl-window content remain unverified.</p><div class="communitySamples">${rows.map(x=>`<p><button type="button" data-sample="${x.node_id}">@${escapeHTML(x.handle)}</button> <span>${escapeHTML(x.stratum)} · ${escapeHTML(x.language)} · ${escapeHTML(x.subject_function)}</span><br>${escapeHTML(x.evidence_summary)} <a href="${escapeHTML(x.source_url||'https://t.me/'+x.handle)}" target="_blank" rel="noreferrer">Public source ↗</a></p>`).join('')}</div></details>`;
+ $('communityReport').innerHTML=`<h2>C${item.display_id} · ${escapeHTML(item.label)}</h2><p class="hint">${escapeHTML(item.confidence)} confidence · ${fmt(item.nodes)} channels · ${fmt(item.subscribers)} summed subscribers</p><p>${escapeHTML(item.description)}</p>${partnerHTML(item.community)}<p class="hint">Usable evidence: largest ${cv.top.usable}/${cv.top.sampled}; random others ${cv.random.usable}/${cv.random.sampled}. ${cv.random.sampled===0?'Small-group census; no remaining channels.':''}</p><details><summary>Evidence and qualifications</summary><p><b>Largest channels:</b> ${escapeHTML(item.top_summary)}</p><p><b>Random others:</b> ${escapeHTML(item.random_summary)}</p><p><b>Exceptions:</b> ${item.counterexamples.map(escapeHTML).join('; ')||'None identified in the inspected sample.'}</p><p>${item.limitations.map(escapeHTML).join(' ')}</p><p>Current public previews; historical identity and crawl-window content remain unverified.</p><div class="communitySamples">${rows.map(x=>`<p><button type="button" data-sample="${x.node_id}">@${escapeHTML(x.handle)}</button> <span>${escapeHTML(x.stratum)} · ${escapeHTML(x.language)} · ${escapeHTML(x.subject_function)}</span><br>${escapeHTML(x.evidence_summary)} <a href="${escapeHTML(x.source_url||'https://t.me/'+x.handle)}" target="_blank" rel="noreferrer">Public source ↗</a></p>`).join('')}</div></details>`;
  $('communityReport').querySelectorAll('[data-sample]').forEach(b=>b.onclick=()=>setSelection(Number(b.dataset.sample),true));
+ $('communityReport').querySelectorAll('[data-partner]').forEach(b=>b.onclick=()=>setPartner(Number(b.dataset.partner)));
+ $('communityReport').querySelectorAll('[data-psort]').forEach(b=>b.onclick=()=>{partnerSort=b.dataset.psort;updateCommunityPanel()});
+ if($('partnerMore'))$('partnerMore').onclick=()=>{partnerExpanded=!partnerExpanded;updateCommunityPanel()};
+ if($('partnerAll'))$('partnerAll').onclick=()=>setPartner(chosenPartner);
 }
 // Map controls that sit over the canvas; names never draw beneath them.
 function labelHudRects(pad=4){const sr=stage.getBoundingClientRect();return [...stage.querySelectorAll('.toolbar,.legend,#viewStatus')].filter(el=>el.offsetParent!==null&&getComputedStyle(el).visibility!=='hidden').map(el=>{const b=el.getBoundingClientRect();return [b.left-sr.left-pad,b.top-sr.top-pad,b.width+2*pad,b.height+2*pad]})}

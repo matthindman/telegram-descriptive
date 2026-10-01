@@ -22,8 +22,11 @@ assert overlap['output_positions_sha256']==hashlib.sha256((a.root/'layout/positi
 assert np.array_equal(np.load(a.root/'layout/positions.npy'),n[['x','y']].to_numpy()), 'Layout files disagree'
 style_path=out/'style.json'
 default={'subscriber_reference':100000,'reference_diameter_css_px':8.,'zero_marker_css_px':2.,'zero_marker_opacity':.25,
-         'edge_density_min':.03,'edge_density_max':.24,'edge_density_exponent':1.4,'edge_width_min_css_px':.6,'edge_width_max_css_px':1.3,
-         'edge_tone_cap':.5,'edge_color':'#8099b0','background':'#0a121d','monochrome':'#8ccdc4',
+         'edge_width_min_css_px':.6,'edge_width_max_css_px':1.3,
+         'edge_tone_cap':.45,'edge_color':'#8099b0','background':'#0a121d','monochrome':'#8ccdc4',
+         'edge_base_width_css_px':.9,'edge_ink_min_length_world':8.,'edge_calibration_quantiles':[.5,.995],
+         'edge_highlight_cap':.45,'edge_highlight_length_exponent':.5,'edge_highlight_calibration_quantiles':[.5,.99],'edge_highlight_color':'#d6e6f5',
+         'edge_context_dim_selection':.08,'edge_context_dim_community':.35,
          'continuous_ramp':['#3d7bab','#4dc4b0','#ffc26e'],
          'palette':['#70cbb8','#e9ad69','#87a6ec','#d68abe','#bdcc77','#77c5da','#c49bed','#e98884','#b8ceda','#c99d7a','#a5b9e5','#84b8a0'],
          'log_weight_min':float(np.log(e.weight.quantile(.01))),'log_weight_max':float(np.log(e.weight.quantile(.99)))}
@@ -32,11 +35,14 @@ assert set(style)==set(default), 'Unknown or missing style keys; descriptive met
 for key,value in style.items():
     if isinstance(default[key],(float,int)): assert isinstance(value,(float,int)) and np.isfinite(value),key
 assert style['subscriber_reference']>0 and style['reference_diameter_css_px']>0
-assert 0<=style['edge_density_min']<=style['edge_density_max'] and 0<style['edge_tone_cap']<=1
-assert style['edge_density_exponent']>0 and 0<style['edge_width_min_css_px']<=style['edge_width_max_css_px']
+assert 0<style['edge_tone_cap']<=1 and 0<style['edge_width_min_css_px']<=style['edge_width_max_css_px']
 assert style['log_weight_min']<style['log_weight_max'] and 0< style['zero_marker_css_px'] and 0<=style['zero_marker_opacity']<=1
 import re
-for colors in [style['palette'],style['continuous_ramp'],[style['background'],style['edge_color'],style['monochrome']]]:
+assert 0<style['edge_highlight_cap']<=1 and 0<=style['edge_highlight_length_exponent']<=1 and style['edge_base_width_css_px']>0 and style['edge_ink_min_length_world']>0
+assert 0<style['edge_context_dim_selection']<=1 and 0<style['edge_context_dim_community']<=1
+assert all(len(style[k])==2 and 0<style[k][0]<style[k][1]<1 for k in ['edge_calibration_quantiles','edge_highlight_calibration_quantiles'])
+assert len(style['edge_calibration_quantiles'])==2 and 0<style['edge_calibration_quantiles'][0]<style['edge_calibration_quantiles'][1]<1
+for colors in [style['palette'],style['continuous_ramp'],[style['background'],style['edge_color'],style['monochrome'],style['edge_highlight_color']]]:
     assert colors and all(isinstance(c,str) and re.fullmatch(r'#[0-9a-fA-F]{6}',c) for c in colors)
 assert len(style['continuous_ramp'])==3
 style_path.write_text(json.dumps(style,indent=2)+'\n')
@@ -109,11 +115,11 @@ report={'nodes':len(n),'edges':len(e),'html_bytes':len(html.encode()),'node_arra
         'weight_float32_max_relative_error':float(np.max(np.abs(ea[:,2]/e.weight.to_numpy()-1))),
         'encoding':{'positive_diameter':'sqrt(subscribers/subscriber_reference) times a common factor: min(requested diameter, overlap-safe world diameter projected to pixels) when protection is enabled',
                     'node_coverage':'Analytic circle/pixel intersection; fractional pixel coverage carries subpixel area. Final 8-bit display quantization remains.',
-                    'edges':'Additive RGBA32F optical density; alpha=cap*(1-exp(-sum density)); nodes composited after ties.',
+                    'edges':'Two RGBA32F channels. Base: each tie deposits weight / max(world length, min length) per unit length (ink proportional to weight, zoom-invariant); alpha = cap*log1p(D/d0)/log1p(d1/d0), d0/d1 calibrated once per viewport at the default overview (fixed during pan/zoom/filter/highlight). Highlight (selected channel, or the external ties of a chosen community, optionally one partner): weight / length^highlight_length_exponent; alpha = highlight_cap*log1p(D/h0)/log1p(h1/h0), h0/h1 calibrated once per selection at the overview camera; composited above the base in a brighter colour while other ties dim. Nodes composited after ties.',
                     'core_controls':'Log color scale and slider over attained core values; exact integer entry available.',
                     'zero_counts':'Hidden by default; optional dim 2px non-area diamonds.',
                      'community_colors':'Palette index per partition chosen so spatially adjacent communities (k-nearest marks plus nearby salient marks) receive dissimilar CIELAB colours; categorical identifiers only.',
                      'community_names':'Member-anchored: the near text edge sits a fixed CSS-pixel gap beyond one displayed boundary member glyph; candidates scored over their active zoom range for foreign and own marks under or near the text, neighbourhood dominance, hull-border distance and label collisions.',
-                    'layers':['edge_density','edge_tone_mapping','node_coverage','labels']}}
+                    'layers':['tie_ink_base','tie_highlight','tie_tone_mapping','node_coverage','labels']}}
 assert report['positive_counts_preserved_exactly_in_float32']
 (out/'render_manifest.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))

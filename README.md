@@ -331,3 +331,25 @@ names; mobile 8×: 224 → 3). All data inputs are byte-identical to v7.
 [Methods and corrections](outputs/crawled_channel_graph_v8_2026-10-01/visualization/methods.txt) ·
 [review response](outputs/crawled_channel_graph_v8_2026-10-01/revision/review_response.txt) ·
 [comparison data](outputs/crawled_channel_graph_v8_2026-10-01/revision/association_comparison_v6_v7_v8.json)
+
+## 2026-10-01 — weight-proportional ties and linked communities in atlas v9
+
+[Atlas v9](outputs/crawled_channel_graph_v9_2026-10-01/visualization/crawled_channels_atlas.html)
+fixes the uninformative grey tie wash. A [review](outputs/tie_layer_review_2026-10-01/)
+of the [tie-layer research](outputs/tie_layer_research_2026-10-01/RESEARCH_AND_PROPOSAL.txt)
+found that tie ink followed line length rather than strength: long weak links
+painted the whole map while the strongest 1% of ties (48% of weight) got 1.4% of
+the ink. Each tie's ink is now proportional to its weight, with brightness on a
+fixed log scale calibrated once per window size. Near-maximum tie pixels at the
+overview fall from about 55–63% to under 1%, and halos and corridors become
+visible. Strong individual ties are almost all short; distant groups are linked
+mainly by many weak ties.
+
+Selecting a channel or community draws its ties in a separate, brighter layer
+(own brightness scale, lighter colour, partial length compensation) so long-range connections remain
+visible. A community's panel lists its linked communities with weight, share,
+direction and affinity; clicking one shows only that pair's ties. Node positions,
+sizes, labels and colors are unchanged; data inputs are byte-identical to v8.
+
+[Methods](outputs/crawled_channel_graph_v9_2026-10-01/visualization/methods.txt) ·
+[tie verification](outputs/crawled_channel_graph_v9_2026-10-01/visualization/tie_layer_verification.json)

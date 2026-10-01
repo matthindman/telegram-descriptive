@@ -89,6 +89,22 @@ For semantic community names, read [community labeling notes](references/communi
   Prefer subdued neutral edges and stronger node color. For dense overview ties,
   use bounded opacity as the main strength cue and modest width as redundancy.
   State any log compression and show reference weights. Very low alpha in an 8-bit framebuffer can vanish or plateau instead of accumulating. Use a tested floating-point density/composite pass or a measured visibility floor; generate legend swatches through the actual renderer. Overlap density does not support precise per-edge comparisons.
+- Check where tie ink actually goes before tuning tone curves. A per-edge
+  brightness floor plus long lines makes ink follow LINE LENGTH, not weight:
+  long weak ties paint a uniform wash while short strong ties vanish under
+  nodes. Make each tie's total ink proportional to its weight (density ∝
+  weight / layout length, zoom-invariant, no floor), use a fixed log exposure
+  calibrated once per viewport (never re-normalized on pan/zoom), and measure
+  near-ceiling share, ink-vs-weight agreement, and buffer integrals against an
+  independent sum. Check whether strong long ties even exist before trading
+  them off.
+- Show long-range and group-to-group structure on demand rather than as an
+  overview hairball: a separate highlight channel (own calibration, distinct
+  colour, partial length compensation; keep its ceiling modest, about 0.5 or less,
+  so nodes stay dominant) for a selected channel/community/pair,
+  plus a ranked partner panel (raw weight, share, direction, and an affinity
+  measured against between-group weight with minimum group size). State that
+  per-selection brightness calibration is relative within that selection.
 - Show exact weights in local details. Allow edge visibility/contrast controls,
   neighborhood emphasis, and search. Avoid arrowhead clutter in an undirected
   overview; direction can remain in the inspected relationship details.
